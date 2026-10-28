@@ -3,12 +3,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createProfile, dataHome, defaults, globalConfigPath, groupProfiles, lastProfile, listProfilesMeta, loadConfig, loadGlobalConfig, loadMeta, migrateLegacyHome, normalizeDir, profilePath, rememberProfile, socketCandidates } from '../src/profiles.ts';
+import { createProfile, dataHome, defaults, globalConfigPath, groupProfiles, importLegacyProfile, lastProfile, legacyHome, listLegacyProfiles, listProfilesMeta, loadConfig, loadGlobalConfig, loadMeta, normalizeDir, profilePath, rememberProfile, socketCandidates } from '../src/profiles.ts';
 import { removeDir } from './support.ts';
 
 /** Saves the env vars these tests touch; HOME is already sandboxed by support.ts. */
 function envSandbox() {
-  const saved = { INFINITE_CHAT_HOME: process.env.INFINITE_CHAT_HOME, OPTCHAT_HOME: process.env.OPTCHAT_HOME, INFINITE_CHAT_SOCK_HOME: process.env.INFINITE_CHAT_SOCK_HOME, INFINITE_CHAT_NO_MIGRATE: process.env.INFINITE_CHAT_NO_MIGRATE };
+  const saved = { INFINITE_CHAT_HOME: process.env.INFINITE_CHAT_HOME, OPTCHAT_HOME: process.env.OPTCHAT_HOME, INFINITE_CHAT_SOCK_HOME: process.env.INFINITE_CHAT_SOCK_HOME, INFINITE_CHAT_NO_LEGACY: process.env.INFINITE_CHAT_NO_LEGACY };
   return () => { for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } };
 }
 
@@ -124,31 +124,45 @@ test('an invalid global config warns and is ignored, key by key', () => {
   } finally { cleanup(); removeDir(dir); }
 });
 
-test('a previous ~/.optchat install is copied into ~/.infinite-chat once, sockets excepted', () => {
+test('old pi-optchat profiles are listed from ~/.optchat and converted only on explicit import', () => {
   const cleanup = envSandbox();
-  delete process.env.INFINITE_CHAT_HOME; delete process.env.OPTCHAT_HOME; delete process.env.INFINITE_CHAT_NO_MIGRATE;
+  delete process.env.INFINITE_CHAT_HOME; delete process.env.OPTCHAT_HOME; delete process.env.INFINITE_CHAT_NO_LEGACY;
   const home = mkdtempHome();
   process.env.HOME = home; process.env.USERPROFILE = home;
   try {
     const legacyProfile = join(home, '.optchat', 'profiles', 'old');
     fs.mkdirSync(legacyProfile, { recursive: true });
     fs.writeFileSync(join(legacyProfile, 'config.json'), '{}');
-    fs.writeFileSync(join(home, '.optchat', 'profiles', 'old', 'lock.sock'), 'stale');
-    fs.writeFileSync(join(home, '.optchat', 'last-profile'), 'old');
+    fs.writeFileSync(join(legacyProfile, 'AGENTS.md'), '# old\n');
+    fs.writeFileSync(join(legacyProfile, 'lock.sock'), 'stale');
+    fs.mkdirSync(join(legacyProfile, 'main'), { recursive: true });
+    fs.writeFileSync(join(legacyProfile, 'main', '2026-01-01.jsonl'), '{}\n');
+    assert.deepEqual(legacyHome(), join(home, '.optchat'));
+    assert.deepEqual(listLegacyProfiles(), ['old'], 'unconverted old profiles are offered');
+    assert.deepEqual(listLegacyProfiles(), ['old'], 'nothing is copied by listing');
+    assert.ok(!fs.existsSync(join(home, '.infinite-chat', 'profiles', 'old')), 'listing never touches the data home');
 
-    const first = migrateLegacyHome(error => { throw error; });
-    assert.deepEqual(first, ['old']);
-    assert.equal(fs.readFileSync(join(home, '.infinite-chat', 'profiles', 'old', 'config.json'), 'utf8'), '{}');
-    assert.ok(!fs.existsSync(join(home, '.infinite-chat', 'profiles', 'old', 'lock.sock')), 'stale sockets are not copied');
-    assert.ok(fs.existsSync(join(home, '.optchat', 'profiles', 'old', 'config.json')), 'the old install keeps its data');
-    assert.deepEqual(migrateLegacyHome(), [], 'the second run is a no-op');
+    importLegacyProfile('old');
+    const converted = profilePath('old');
+    assert.equal(fs.readFileSync(join(converted, 'config.json'), 'utf8'), '{}');
+    assert.ok(!fs.existsSync(join(converted, 'lock.sock')), 'stale sockets are not copied');
+    assert.ok(fs.existsSync(join(legacyProfile, 'config.json')), 'the old install keeps its data');
+    assert.equal(loadMeta(converted).cwd, undefined, 'the converted profile starts unscoped, so the first open claims it');
+    assert.deepEqual(listLegacyProfiles(), [], 'a converted profile is no longer offered');
+    assert.throws(() => importLegacyProfile('old'), /Profile already exists: old/);
+    assert.throws(() => importLegacyProfile('never-there'), /No old pi-optchat profile named never-there/);
 
-    fs.rmSync(join(home, '.infinite-chat'), { recursive: true, force: true });
-    process.env.INFINITE_CHAT_NO_MIGRATE = '1';
-    assert.deepEqual(migrateLegacyHome(), [], 'INFINITE_CHAT_NO_MIGRATE skips the copy');
-    delete process.env.INFINITE_CHAT_NO_MIGRATE;
+    createProfile('fresh');
+    assert.deepEqual(listLegacyProfiles(), [], 'a name already taken in the data home is not offered again');
+    process.env.INFINITE_CHAT_NO_LEGACY = '1';
+    assert.deepEqual(listLegacyProfiles(), [], 'INFINITE_CHAT_NO_LEGACY hides the old profiles');
+    delete process.env.INFINITE_CHAT_NO_LEGACY;
+    process.env.INFINITE_CHAT_HOME = join(home, 'custom');
+    assert.equal(legacyHome(), undefined, 'a custom data home never reads the host ~/.optchat');
+    assert.deepEqual(listLegacyProfiles(), []);
     fs.rmSync(join(home, '.optchat'), { recursive: true, force: true });
-    assert.deepEqual(migrateLegacyHome(), [], 'nothing to migrate, nothing happens');
+    delete process.env.INFINITE_CHAT_HOME;
+    assert.deepEqual(listLegacyProfiles(), [], 'nothing to convert, nothing offered');
   } finally {
     cleanup();
     process.env.HOME = homedir(); process.env.USERPROFILE = homedir();

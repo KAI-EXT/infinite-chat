@@ -1,0 +1,20 @@
+---
+name: infinite-chat-plugin-design
+description: infinite-chat (~/Code/ai/infinite-chat) 是用户自建的 pi 记忆插件，从 pi-optchat 分叉；关键设计决策与兼容约定
+type: decision
+---
+
+# infinite-chat 插件的关键设计决策
+
+**Why**: 用户要替换 npm:pi-optchat，目标：ohos 兼容、profile 按目录隔离、session 绑定恢复、全局默认配置、UI 显示子 agent/压缩模型、默认模型 zai-coding-cn/glm-5.3-flash。
+
+**How to apply**:
+- 数据根目录 `~/.infinite-chat`（env `INFINITE_CHAT_HOME`，旧 `OPTCHAT_HOME` 仍兼容；测试沙盒靠它）。
+- profile 目录作用域存在 `profiles/<name>/profile.json`（cwd/createdAt/lastUsedAt）；无 cwd 的 profile 在所有目录可见，首次打开即认领当前目录。resume 永远以 session 绑定为准，不受目录过滤影响。
+- 全局默认配置 `~/.infinite-chat/config.json`：创建 profile 时烘焙进 config.json；加载时只补缺失键（profile 自己的 config.json 优先）；非法键逐个丢弃并 warn。
+- socket 多候选回退（ohos 修复核心）：`socketCandidates()` = `INFINITE_CHAT_SOCK_HOME` > profile 目录（限 sun_path）> `<dataHome>/sock/<hash>` > tmpdir；owner/connector 用同一列表相遇；EADDRINUSE 永远不落到下一候选（不能遮蔽真实 owner）。
+- 品牌全改 InfiniteChat：命令 `/infinite-chat`，flag `--infinite-chat-*`（旧 `--optchat-*` 仍注册为别名），绑定键 `infinite-chat.profile`（读旧 `optchat.profile` 兼容旧 session）。
+- 首次运行把 `~/.optchat` **复制**（不移动）到 `~/.infinite-chat`；`INFINITE_CHAT_NO_MIGRATE=1` 跳过。
+- 依赖必须用上游 package-lock.json 锁定（pi-coding-agent 1.0.2）；不带 lock 安装会因 `@earendil-works/pi-codemode` 导入缺失全挂。
+
+**Related**: [[infinite-chat-env-gotchas]]

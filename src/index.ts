@@ -9,7 +9,7 @@ import { Type } from 'typebox';
 import { Memory } from './memory.ts';
 import { atomicWrite, storeFor } from './store.ts';
 import { createCompressor, type ModelChoice } from './compactor.ts';
-import { createProfile, dataHome, groupProfiles, holdProfile, instructions, isWindows, lastProfile, listProfilesMeta, loadConfig, loadGlobalConfig, migrateLegacyHome, profilePath, rememberProfile, saveConfig, ProfileBusyError, type ProfileConfig } from './profiles.ts';
+import { createProfile, dataHome, groupProfiles, holdProfile, importLegacyProfile, instructions, isWindows, lastProfile, listLegacyProfiles, listProfilesMeta, loadConfig, loadGlobalConfig, profilePath, rememberProfile, saveConfig, ProfileBusyError, type ProfileConfig } from './profiles.ts';
 import { allowSearch, CONTINUITY, IMPORT_GUIDANCE, MASTER, modelsHint, SEARCH_DOC, TURN_REFRESHED, VIEW_DOC } from './prompts.ts';
 import { cachePayload, record } from './cache.ts';
 import { saveImages } from './images.ts';
@@ -62,8 +62,6 @@ export const version = ((): string | undefined => {
 const brand = version ? `InfiniteChat v${version}` : 'InfiniteChat';
 
 export default function infiniteChat(pi: ExtensionAPI) {
-  // Adopt a previous pi-optchat install once, before anything reads the data home; reported at session_start.
-  const migrated = migrateLegacyHome();
   let active: Active | undefined;
   let remote: Awaited<ReturnType<typeof openConnectedWindow>> | undefined;
   /** `pi -p` on a profile another Pi owns: the prompt goes to a subagent in that Pi (--infinite-chat-connect). */
@@ -224,19 +222,42 @@ export default function infiniteChat(pi: ExtensionAPI) {
   };
   const CONNECT = 'Start a connected subagent conversation here', BACK = 'Back';
   const OTHERS = '── Profiles from other directories…';
+  const LEGACY = '── Old profiles from ~/.optchat (select to convert)…';
+  const LEGACY_CONVERT_ALL = '__convert-all__';
   const chooseProfile = async (ctx: ExtensionContext): Promise<string | undefined> => {
     // Outside the TUI (print, json, RPC hosts) never pick or create a profile: a dialog would hang the host, and a guess could write into the wrong memory.
     if (ctx.mode !== 'tui') return undefined;
     const { here, others } = groupProfiles(listProfilesMeta(), ctx.cwd);
+    const legacy = listLegacyProfiles();
     // This directory's profiles first, last-used on top; then the other directories behind one expansion, so a
-    // project's profiles are the ones Enter reaches. Unscoped profiles (created elsewhere, or migrated) show here too.
+    // project's profiles are the ones Enter reaches. Unscoped profiles (created elsewhere, or converted) show here too.
     const last = lastProfile(ctx.cwd);
     const entries = last && here.some(({ name }) => name === last) ? [...here].sort((a, b) => Number(b.name === last) - Number(a.name === last)) : here;
-    const labels = [...entries.map(({ name }) => name), ...others.length ? [OTHERS] : [], '+ Create profile'];
+    const labels = [...entries.map(({ name }) => name), ...others.length ? [OTHERS] : [], ...legacy.length ? [LEGACY] : [], '+ Create profile'];
     const selected = await ctx.ui.select('InfiniteChat profile', labels);
     if (selected === OTHERS) {
       const byLabel = new Map<string, string>(others.map(({ name, meta }) => [`${name} — ${meta.cwd ?? 'directory not recorded'}`, name]));
       return await ctx.ui.select('Profiles from other directories', [...byLabel.keys()]).then(picked => picked && byLabel.get(picked));
+    }
+    if (selected === LEGACY) {
+      // Old pi-optchat profiles stay in ~/.optchat until they are explicitly picked here; converting copies one into
+      // the InfiniteChat data home and opens it. Conversion is a copy, so the old plugin keeps working throughout.
+      const byLabel = new Map<string, string>(legacy.map(name => [`${name} — old pi-optchat profile`, name]));
+      if (legacy.length > 1) byLabel.set(`Convert all ${legacy.length} old profiles into ${dataHome()}`, LEGACY_CONVERT_ALL);
+      const picked = await ctx.ui.select('Old pi-optchat profiles', [...byLabel.keys()]);
+      const choice = picked === undefined || picked === null ? undefined : byLabel.get(picked);
+      if (choice === undefined || choice === LEGACY_CONVERT_ALL) {
+        let converted = 0;
+        for (const name of listLegacyProfiles()) {
+          try { importLegacyProfile(name); converted++; }
+          catch (error) { ctx.ui.notify(`Could not convert ${name}: ${error instanceof Error ? error.message : String(error)}`, 'error'); }
+        }
+        if (converted) ctx.ui.notify(`Converted ${converted} old profile${converted === 1 ? '' : 's'} into ${dataHome()}. Reopen /infinite-chat profile to pick one.`, 'info');
+        return undefined;
+      }
+      try { importLegacyProfile(choice); }
+      catch (error) { ctx.ui.notify(`Could not convert ${choice}: ${error instanceof Error ? error.message : String(error)}`, 'error'); return undefined; }
+      return choice;
     }
     if (selected !== '+ Create profile') return selected;
     const name = (await ctx.ui.input('New profile name', 'work or personal'))?.trim();
@@ -244,8 +265,15 @@ export default function infiniteChat(pi: ExtensionAPI) {
     createProfile(name, ctx.cwd, loadGlobalConfig(warning => ctx.ui.notify(warning, 'warning'))); return name;
   };
   const openProfile = async (name: string, ctx: ExtensionContext) => {
-    const dir = profilePath(name);
-    if (!existsSync(dir)) throw new Error(`Profile ${name} does not exist. Use /infinite-chat profile to create it.`);
+    let dir = profilePath(name);
+    if (!existsSync(dir)) {
+      // An unconverted old pi-optchat profile (a resumed session bound via optchat.profile, a flag, or a command):
+      // convert on demand, so resume stays automatic while unbound profiles wait for an explicit pick.
+      if (!listLegacyProfiles().includes(name)) throw new Error(`Profile ${name} does not exist. Use /infinite-chat profile to create or convert it.`);
+      importLegacyProfile(name);
+      dir = profilePath(name);
+      ctx.ui.notify(`Converted old pi-optchat profile ${name} into ${dataHome()}.`, 'info');
+    }
     const unlock = await holdProfile(storeFor(dir), dir, name, `${name} · PID ${process.pid} · ${hostname()} · ${ctx.cwd}`, warning => ctx.ui.notify(warning, 'warning'));
     let openingMemory: Memory | undefined;
     try {
@@ -302,7 +330,6 @@ export default function infiniteChat(pi: ExtensionAPI) {
 
   pi.on('session_start', async (_event, ctx) => {
     stopping = false;
-    if (migrated.length) ctx.ui.notify(`Migrated ${migrated.length} profile${migrated.length === 1 ? '' : 's'} from ~/.optchat into ${dataHome()}.`, 'info');
     const entries = ctx.sessionManager.getEntries();
     const saved = entries.findLast(e => e.type === 'custom' && (e.customType === binding || e.customType === LEGACY_BINDING));
     const boundName = saved?.type === 'custom' && record(saved.data) && typeof saved.data.name === 'string' ? saved.data.name : undefined;

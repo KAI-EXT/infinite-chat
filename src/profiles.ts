@@ -152,19 +152,36 @@ export function rememberProfile(name: string, cwd?: string) {
   } catch { /* The session binding still works; only the picker's ordering misses this. */ }
 }
 
-/** One-time adoption of a previous pi-optchat install: `~/.optchat` is copied (never moved) into `~/.infinite-chat` on first run,
- * so existing profiles keep their memory and the old plugin keeps working. Stale lock sockets are not copied. Skipped whenever a
- * custom data home is in effect, or when INFINITE_CHAT_NO_MIGRATE is set. Returns the adopted profile names. */
-export function migrateLegacyHome(warn: (text: string) => void = console.error): string[] {
-  if (process.env.INFINITE_CHAT_HOME || process.env.OPTCHAT_HOME || process.env.INFINITE_CHAT_NO_MIGRATE) return [];
-  const legacy = join(homedir(), '.optchat'), fresh = join(homedir(), '.infinite-chat');
-  if (!existsSync(join(legacy, 'profiles')) || existsSync(join(fresh, 'profiles'))) return [];
-  try {
-    mkdirSync(fresh, { recursive: true, mode: 0o700 });
-    cpSync(legacy, fresh, { recursive: true, errorOnExist: false, force: false, filter: source => !source.endsWith('.sock') });
-    const root = join(fresh, 'profiles');
-    return existsSync(root) ? readdirSync(root, { withFileTypes: true }).filter(f => f.isDirectory()).map(f => f.name) : [];
-  } catch (error) { warn(`Could not migrate ${legacy} to ${fresh}: ${error instanceof Error ? error.message : String(error)}`); return []; }
+/** The previous pi-optchat data home, offered only while InfiniteChat uses the default home itself: a custom
+ * INFINITE_CHAT_HOME (a sandbox, ohos) must not silently pull in host data. `INFINITE_CHAT_NO_LEGACY` hides the
+ * old profiles entirely. */
+export const legacyHome = () =>
+  process.env.INFINITE_CHAT_HOME || process.env.OPTCHAT_HOME || process.env.INFINITE_CHAT_NO_LEGACY ? undefined : join(homedir(), '.optchat');
+/** Old pi-optchat profiles not converted yet: present in `~/.optchat/profiles`, absent from the InfiniteChat data home. */
+export function listLegacyProfiles(): string[] {
+  const legacy = legacyHome();
+  const root = legacy && join(legacy, 'profiles');
+  if (!root || !existsSync(root)) return [];
+  const known = new Set(listProfiles());
+  return readdirSync(root, { withFileTypes: true })
+    .filter(f => f.isDirectory() && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(f.name) && !known.has(f.name))
+    .map(f => f.name).sort();
+}
+/** Converts one old pi-optchat profile into the InfiniteChat data home: a full copy (never a move, so the old plugin
+ * keeps working), minus stale lock sockets and lock files, plus the `profile.json` metadata old profiles never had.
+ * The copy starts unscoped, so the first open claims it for the directory it opened in. */
+export function importLegacyProfile(name: string): string {
+  const legacy = legacyHome();
+  const source = legacy && join(legacy, 'profiles', name);
+  const dir = profilePath(name);
+  if (!legacy || !source || !existsSync(source)) throw new Error(`No old pi-optchat profile named ${name} in ${legacy ?? '~/.optchat'}.`);
+  if (existsSync(dir)) throw new Error(`Profile already exists: ${name}`);
+  cpSync(source, dir, { recursive: true, errorOnExist: true, force: false, filter: path => !/\.(sock|lock)$/.test(path) });
+  if (!existsSync(join(dir, 'profile.json'))) {
+    try { saveMeta(dir, { createdAt: statSync(source).birthtime.toISOString() }); }
+    catch { saveMeta(dir, {}); }
+  }
+  return dir;
 }
 
 export class ProfileBusyError extends Error {

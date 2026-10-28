@@ -9,7 +9,7 @@ A Pi extension that gives you one endless chat per profile, remembered through a
 | Data home | `~/.optchat` | `~/.infinite-chat` (`INFINITE_CHAT_HOME` overrides; the old `OPTCHAT_HOME` spelling still works) |
 | Profile scope | global | **per directory**: a profile belongs to the project directory it was created in |
 | Picker | all profiles, last used first | this directory's profiles first, others behind `── Profiles from other directories…` |
-| Session resume | remembers the binding | same, plus sessions bound by pi-optchat still resume (legacy `optchat.profile` entries are read) |
+| Session resume | remembers the binding | same, plus sessions bound by pi-optchat still resume (legacy `optchat.profile` entries are read; the bound profile is converted on demand) |
 | Defaults | — | **subagents and compactor default to `zai-coding-cn/glm-5.3-flash`** (thinking: high / medium) |
 | Global defaults | per profile only | `~/.infinite-chat/config.json` seeds every new profile and fills gaps when a profile loads |
 | Sockets | `lock.sock` inside the profile, fail hard elsewhere | **candidate fallback**: profile dir → `<dataHome>/sock/` → temp dir, so ohos sandboxes that refuse unix sockets still lock and connect |
@@ -30,7 +30,9 @@ Restart Pi, run `/infinite-chat`, and choose **+ Create profile** — the profil
 
 ### Coming from pi-optchat
 
-On first run InfiniteChat copies `~/.optchat` into `~/.infinite-chat` (the original is kept untouched; stale lock sockets are not copied). Copied profiles have no recorded directory, so they appear in every directory's picker until you open one — opening it claims it for that directory. Set `INFINITE_CHAT_NO_MIGRATE=1` to skip the copy.
+Nothing is copied automatically. Old profiles stay in `~/.optchat` until you convert them: the profile picker (`/infinite-chat profile`) shows a `── Old profiles from ~/.optchat (select to convert)…` section listing what has not been converted yet. Picking one copies it into `~/.infinite-chat` (the original is kept untouched; stale lock sockets and lock files are not copied) and opens it right away. There is also a one-shot "Convert all" entry in the same menu.
+
+Resuming a session that pi-optchat bound still works without any picking: the bound profile is converted on demand on resume. Converted profiles have no recorded directory, so they appear in every directory's picker until you open one — opening it claims it for that directory. Set `INFINITE_CHAT_NO_LEGACY=1` to hide the old profiles entirely.
 
 ## Directory scoping
 
