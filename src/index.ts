@@ -246,9 +246,15 @@ export default function infiniteChat(pi: ExtensionAPI) {
       if (legacy.length > 1) byLabel.set(`Convert all ${legacy.length} old profiles into ${dataHome()}`, LEGACY_CONVERT_ALL);
       const picked = await ctx.ui.select('Old pi-optchat profiles', [...byLabel.keys()]);
       const choice = picked === undefined || picked === null ? undefined : byLabel.get(picked);
-      if (choice === undefined || choice === LEGACY_CONVERT_ALL) {
+      // Esc on this submenu cancels; it must never be read as a conversion request.
+      if (choice === undefined) return undefined;
+      if (choice === LEGACY_CONVERT_ALL) {
+        const pending = listLegacyProfiles();
+        // Bulk conversion rewrites the picker for every directory, so it always asks first and names what will land where.
+        const confirmed = await ctx.ui.confirm('Convert all old profiles?', `Copy ${pending.length} profile${pending.length === 1 ? '' : 's'} from ~/.optchat into ${dataHome()}:\n${pending.join(', ')}\nThe originals stay in place.`);
+        if (!confirmed) return undefined;
         let converted = 0;
-        for (const name of listLegacyProfiles()) {
+        for (const name of pending) {
           try { importLegacyProfile(name); converted++; }
           catch (error) { ctx.ui.notify(`Could not convert ${name}: ${error instanceof Error ? error.message : String(error)}`, 'error'); }
         }
