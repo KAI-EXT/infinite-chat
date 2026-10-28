@@ -11,7 +11,7 @@ type: decision
 **How to apply**:
 - 数据根目录 `~/.infinite-chat`（env `INFINITE_CHAT_HOME`，旧 `OPTCHAT_HOME` 仍兼容；测试沙盒靠它）。
 - profile 目录作用域存在 `profiles/<name>/profile.json`（cwd/createdAt/lastUsedAt）；无 cwd 的 profile 在所有目录可见，首次打开即认领当前目录。resume 永远以 session 绑定为准，不受目录过滤影响。
-- 全局默认配置 `~/.infinite-chat/config.json`：创建 profile 时烘焙进 config.json；加载时只补缺失键（profile 自己的 config.json 优先）；非法键逐个丢弃并 warn。
+- 全局默认配置 `~/.infinite-chat/config.json`：创建 profile 时跑模型向导（subagent+compactor 逐个选，Esc=保留预填），预填取全局 config 缺省用内置默认；选中值烘进 profile config.json；全局文件**不存在时**才把本次选择写入全局（首次播种，notify 提示），之后永不覆写、只能手改；加载时只补缺失键（profile config.json 优先）；非法键逐个丢弃并 warn。向导仅 TUI（chooseProfile 非 TUI 提前返回）。
 - socket 多候选回退（ohos 修复核心）：`socketCandidates()` = `INFINITE_CHAT_SOCK_HOME` > profile 目录（限 sun_path）> `<dataHome>/sock/<hash>` > tmpdir；owner/connector 用同一列表相遇；EADDRINUSE 永远不落到下一候选（不能遮蔽真实 owner）。
 - 品牌全改 InfiniteChat：命令 `/infinite-chat`，flag `--infinite-chat-*`（旧 `--optchat-*` 仍注册为别名），绑定键 `infinite-chat.profile`（读旧 `optchat.profile` 兼容旧 session）。
 - 旧 profile **不自动迁移**：留在 `~/.optchat`，picker 里 `Old profiles from ~/.optchat` 折叠菜单选中才转换（`importLegacyProfile` 复制、排除 .sock/.lock、补 profile.json、unscoped 待认领），另有 Convert all；resume/flag/RPC 绑定按需自动转换；`INFINITE_CHAT_NO_LEGACY=1` 隐藏；自定义 INFINITE_CHAT_HOME 永不读宿主 ~/.optchat。
