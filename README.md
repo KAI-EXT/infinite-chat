@@ -28,6 +28,8 @@ pi install /path/to/infinite-chat
 
 Restart Pi, run `/infinite-chat`, and choose **+ Create profile** — the profile is created for the directory you started Pi in.
 
+Creating a profile runs a short wizard: it shows the **subagent model** and the **compactor model** the profile will use — prefilled from `~/.infinite-chat/config.json` when that exists, otherwise from the built-in defaults — and lets you change each before the profile is created. The choices are baked into the new profile's own `config.json`. If the global `config.json` does not exist yet, your choices are written there too, so the next profile starts from them; from then on the global config only changes when you edit it by hand.
+
 ### Coming from pi-optchat
 
 Nothing is copied automatically. Old profiles stay in `~/.optchat` until you convert them: the profile picker (`/infinite-chat profile`) shows a `── Old profiles from ~/.optchat (select to convert)…` section listing what has not been converted yet. Picking one copies it into `~/.infinite-chat` (the original is kept untouched; stale lock sockets and lock files are not copied) and opens it right away. There is also a one-shot "Convert all" entry in the same menu.
@@ -54,7 +56,7 @@ Resuming a session that pi-optchat bound still works without any picking: the bo
 }
 ```
 
-- **Creating** a profile bakes these values into its `config.json` (instead of the code defaults).
+- **Creating** a profile starts the wizard from these values and bakes the final choices into the profile's `config.json` (instead of the code defaults). The first creation without this file writes it from the wizard's choices.
 - **Loading** a profile fills any key its own `config.json` leaves out from this file, then the built-in defaults.
 - Invalid keys are dropped with a warning, never fatal.
 

@@ -110,6 +110,18 @@ export function loadGlobalConfig(warn: (text: string) => void = console.error): 
   Object.assign(config, kept);
   return config;
 }
+/** What the creation wizard starts from: the user's global config where set, the built-in defaults everywhere else. */
+export function creationSeed(global: Partial<ProfileConfig> = loadGlobalConfig()): ProfileConfig {
+  return { ...defaults, ...global };
+}
+export const globalConfigExists = () => existsSync(globalConfigPath());
+/** First-run convenience: the first profile's wizard choices become `<dataHome>/config.json`, so the next profile starts
+ * from them. Writes only when the file does not exist yet — afterwards the user edits the global config by hand. */
+export function seedGlobalConfig(seed: { compactor: ModelChoice; subagent: ModelChoice }): boolean {
+  if (globalConfigExists()) return false;
+  atomicWrite(globalConfigPath(), JSON.stringify(seed, null, 2) + '\n');
+  return true;
+}
 /** A profile's config.json wins; missing keys fall back to the user's global config, then the built-in defaults. */
 export function loadConfig(dir: string, globalDefaults: Partial<ProfileConfig> = {}): ProfileConfig {
   const value: unknown = JSON.parse(readFileSync(join(dir, 'config.json'), 'utf8'));

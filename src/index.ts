@@ -9,7 +9,7 @@ import { Type } from 'typebox';
 import { Memory } from './memory.ts';
 import { atomicWrite, storeFor } from './store.ts';
 import { createCompressor, type ModelChoice } from './compactor.ts';
-import { createProfile, dataHome, groupProfiles, holdProfile, importLegacyProfile, instructions, isWindows, lastProfile, listLegacyProfiles, listProfilesMeta, loadConfig, loadGlobalConfig, profilePath, rememberProfile, saveConfig, ProfileBusyError, type ProfileConfig } from './profiles.ts';
+import { createProfile, creationSeed, dataHome, globalConfigExists, globalConfigPath, groupProfiles, holdProfile, importLegacyProfile, instructions, isWindows, lastProfile, listLegacyProfiles, listProfilesMeta, loadConfig, loadGlobalConfig, profilePath, rememberProfile, saveConfig, seedGlobalConfig, ProfileBusyError, type ProfileConfig } from './profiles.ts';
 import { allowSearch, CONTINUITY, IMPORT_GUIDANCE, MASTER, modelsHint, SEARCH_DOC, TURN_REFRESHED, VIEW_DOC } from './prompts.ts';
 import { cachePayload, record } from './cache.ts';
 import { saveImages } from './images.ts';
@@ -262,7 +262,20 @@ export default function infiniteChat(pi: ExtensionAPI) {
     if (selected !== '+ Create profile') return selected;
     const name = (await ctx.ui.input('New profile name', 'work or personal'))?.trim();
     if (!name) return undefined;
-    createProfile(name, ctx.cwd, loadGlobalConfig(warning => ctx.ui.notify(warning, 'warning'))); return name;
+    // Creation wizard: the subagent and compactor models start from the global config (or the built-in defaults) and
+    // can be adjusted for this profile. The first setup writes the global config so the next profile starts from these
+    // choices; after that the global config only changes by hand.
+    const global = loadGlobalConfig(warning => ctx.ui.notify(warning, 'warning'));
+    const seed = creationSeed(global);
+    const models = ctx.modelRegistry.getAvailable().map(m => ({ name: `${m.provider}/${m.id}`, thinking: getSupportedThinkingLevels(m) })).sort((x, y) => x.name.localeCompare(y.name));
+    for (const role of ['subagent', 'compactor'] as const) {
+      const choice = await showModelPicker(ctx, role, { profile: name, config: seed, models, save: () => {} });
+      if (choice) seed[role] = choice;
+    }
+    createProfile(name, ctx.cwd, { ...global, subagent: seed.subagent, compactor: seed.compactor });
+    if (seedGlobalConfig({ subagent: seed.subagent, compactor: seed.compactor }))
+      ctx.ui.notify(`Saved these models to ${globalConfigPath()} as the default for new profiles; edit that file to change them.`, 'info');
+    return name;
   };
   const openProfile = async (name: string, ctx: ExtensionContext) => {
     let dir = profilePath(name);

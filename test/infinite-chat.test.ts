@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createProfile, dataHome, defaults, globalConfigPath, groupProfiles, importLegacyProfile, lastProfile, legacyHome, listLegacyProfiles, listProfilesMeta, loadConfig, loadGlobalConfig, loadMeta, normalizeDir, profilePath, rememberProfile, socketCandidates } from '../src/profiles.ts';
+import { createProfile, creationSeed, dataHome, defaults, globalConfigExists, globalConfigPath, groupProfiles, importLegacyProfile, lastProfile, legacyHome, listLegacyProfiles, listProfilesMeta, loadConfig, loadGlobalConfig, loadMeta, normalizeDir, profilePath, rememberProfile, seedGlobalConfig, socketCandidates } from '../src/profiles.ts';
 import { removeDir } from './support.ts';
 
 /** Saves the env vars these tests touch; HOME is already sandboxed by support.ts. */
@@ -101,6 +101,34 @@ test('~/.infinite-chat/config.json seeds new profiles and fills gaps when a prof
     assert.deepEqual(plain.compactor, defaults.compactor);
     assert.equal(plain.subagentLevels, defaults.subagentLevels);
     assert.equal(plain.previousExchange, defaults.previousExchange);
+  } finally { cleanup(); removeDir(dir); }
+});
+
+test('the creation wizard seeds from the global config or the defaults, and the first setup writes the global config once', () => {
+  const dir = fs.mkdtempSync(join(tmpdir(), 'infinite-chat-wizard-'));
+  const cleanup = envSandbox();
+  process.env.INFINITE_CHAT_HOME = dir;
+  try {
+    // No global config yet: the wizard starts from the built-in defaults.
+    assert.ok(!globalConfigExists(), 'the fresh data home has no global config');
+    const fallback = creationSeed({});
+    assert.deepEqual(fallback.subagent, defaults.subagent);
+    assert.deepEqual(fallback.compactor, defaults.compactor);
+
+    // The user keeps the subagent, changes the compactor, and the profile is created with both.
+    createProfile('first', undefined, { subagent: fallback.subagent, compactor: { provider: 'zai-coding-cn', model: 'glm-5.3', thinking: 'low' } });
+
+    // First setup: the chosen models become the global config so the next profile starts from them.
+    assert.ok(seedGlobalConfig({ subagent: fallback.subagent, compactor: { provider: 'zai-coding-cn', model: 'glm-5.3', thinking: 'low' } }), 'the first setup writes the global config');
+    assert.deepEqual(loadGlobalConfig().compactor, { provider: 'zai-coding-cn', model: 'glm-5.3', thinking: 'low' });
+
+    // The next wizard starts from that global config, and it is never overwritten again.
+    const next = creationSeed(loadGlobalConfig());
+    assert.deepEqual(next.compactor, { provider: 'zai-coding-cn', model: 'glm-5.3', thinking: 'low' });
+    fs.writeFileSync(globalConfigPath(), JSON.stringify({ subagent: { provider: 'zai-coding-cn', model: 'glm-5.3-flash', thinking: 'max' } }));
+    assert.equal(seedGlobalConfig({ subagent: fallback.subagent, compactor: fallback.compactor }), false, 'an existing global config is never overwritten');
+    assert.deepEqual(creationSeed(loadGlobalConfig()).subagent, { provider: 'zai-coding-cn', model: 'glm-5.3-flash', thinking: 'max' }, 'hand edits stay in charge');
+    assert.deepEqual(creationSeed(loadGlobalConfig()).compactor, defaults.compactor, 'a missing key still falls back to the defaults');
   } finally { cleanup(); removeDir(dir); }
 });
 
