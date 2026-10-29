@@ -46,6 +46,12 @@ Resuming a session that pi-optchat bound still works without any picking: the bo
 - Other directories' profiles are one expansion away; each row shows its directory.
 - Resuming a session always restores its bound profile, whatever directory you resume from — the scope only affects picking, never resuming.
 
+## Resuming sessions
+
+- Pi stores sessions **per directory**, and all profiles of that directory share one pool. `pi -r` resumes the most recently written session in the pool — while a window is open and chatting, its conversation is always the newest, so plain `pi -r` lands there, not on the profile you last worked in.
+- The binding still decides the profile: whatever session `pi -r` picks, the profile it belongs to is the one that opens. If that profile is busy (its window is still open), the dialog offers **Open a different profile instead** first — it leaves the resumed session untouched; use `/infinite-chat profile` for a fresh session in the profile you want.
+- To resume a specific conversation in a multi-profile directory, use `/resume` inside Pi and pick the session; its binding opens its profile. `pi --infinite-chat-profile <name>` starts a fresh session bound to a chosen profile.
+
 ## Global default config
 
 `~/.infinite-chat/config.json` uses the same shape as a profile's own `config.json`:

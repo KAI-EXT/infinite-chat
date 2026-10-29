@@ -220,7 +220,7 @@ export default function infiniteChat(pi: ExtensionAPI) {
       untitle?.(); untitle = undefined; title.clear(); working = false;
     }
   };
-  const CONNECT = 'Start a connected subagent conversation here', BACK = 'Back';
+  const CONNECT = 'Start a connected subagent conversation here', BACK = 'Back', SWITCH = 'Open a different profile instead';
   const OTHERS = '── Profiles from other directories…';
   const LEGACY = '── Old profiles from ~/.optchat (select to convert)…';
   const LEGACY_CONVERT_ALL = '__convert-all__';
@@ -422,13 +422,17 @@ export default function infiniteChat(pi: ExtensionAPI) {
           if (error instanceof ProfileBusyError && connect === 'auto') { joined = await joinProfile(name); break; }
           if (!(error instanceof ProfileBusyError) || ctx.mode !== 'tui') throw error;
           // A resumed conversation already belongs to this profile, so another profile needs a new session (/infinite-chat profile).
-          // Older owners have no listing protocol. Keep their existing Connect/Back menu rather than failing startup.
+          // Older owners have no listing protocol. Keep their existing menu rather than failing startup.
           const listed = settled ? undefined : await listAttachableAgents(profilePath(name)).catch(() => undefined);
           const agents = listed ?? [];
           const hint = listed?.length === 0 ? '\nNo background agents are running. Ask the main agent to start one.' : '';
           const labels = new Map(agents.map(agent => [`Open subagent ${agent.id} · ${agent.state} · ${oneLine(agent.task).slice(0, 80)}`, agent.id]));
-          const choice = await ctx.ui.select(`${name} is open in another window\n${error.owner}${hint}`,
-            [CONNECT, ...labels.keys(), ...(settled ? [] : [BACK])]);
+          // Show the resolved name: a session bound before a rename would otherwise title the dialog with the old name.
+          const shown = renamedProfile(name) ?? name;
+          // A resumed (settled) session lands here whenever its window is simply still open, which made Connect the
+          // only way forward and habitual Enter attach to someone else's conversation. Offer the way out first.
+          const choice = await ctx.ui.select(`${shown} is open in another window\n${error.owner}${hint}`,
+            settled ? [SWITCH, CONNECT, ...labels.keys()] : [CONNECT, ...labels.keys(), BACK]);
           const agentId = choice && labels.get(choice);
           if (agentId) {
             try {
@@ -441,6 +445,14 @@ export default function infiniteChat(pi: ExtensionAPI) {
               ctx.ui.notify(errorText(error), 'error');
               continue; // It may have finished while the menu was open: refresh, never spawn a replacement.
             }
+          }
+          if (choice === SWITCH) {
+            // The resumed conversation belongs to the busy profile: rebinding it here would rewrite another window's
+            // session, and session_start has no newSession() to switch cleanly. Leave the session without a profile
+            // and name the two paths that do work.
+            status(ctx);
+            ctx.ui.notify(`This session stays bound to ${shown}. Run /infinite-chat profile to open another profile in a fresh session, or /resume to pick a specific conversation.`, 'info');
+            return;
           }
           if (choice === CONNECT) { remote = await openConnectedWindow(pi, ctx, name, text => title.show(t => ctx.ui.setTitle(t), text)); fault = undefined; break; }
           if (choice !== BACK) throw error;

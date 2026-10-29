@@ -74,12 +74,31 @@ test('a busy profile offers to connect or pick another profile, and picking anot
     const rebound = switched.manager.getEntries().filter(e => e.type === 'custom' && e.customType === 'infinite-chat.profile');
     assert.deepEqual(rebound.map(e => e.type === 'custom' && e.data), [{ name: 'busy' }, { name: 'third' }], 'the latest binding wins');
 
-    // A resumed conversation already belongs to `busy`, so it can only connect (or cancel), not switch.
+    // A resumed conversation already belongs to `busy`, so the way out comes first and Connect is deliberate.
     const resumedAsked: string[][] = [];
     const resumed = await start(dir, { select: async (_title, options) => { resumedAsked.push(options); return undefined; } }, 'busy', true);
     sessions.push(resumed.session);
-    assert.deepEqual(resumedAsked, [['Start a connected subagent conversation here']]);
+    assert.deepEqual(resumedAsked, [['Open a different profile instead', 'Start a connected subagent conversation here']]);
     assert.match(resumed.errors.join('\n'), /Profile already running/);
+
+    // Picking the way out leaves the resumed session untouched (no rebinding into another window's session).
+    const leftNotes: string[] = [];
+    const left = await start(dir, { notify: (text, type) => { if (type !== 'error') leftNotes.push(text); },
+      select: async () => 'Open a different profile instead' }, 'busy', true);
+    sessions.push(left.session);
+    assert.deepEqual(left.errors, []);
+    assert.match(leftNotes.join('\n'), /stays bound to busy/);
+    assert.match(leftNotes.join('\n'), /\/infinite-chat profile|\/resume/);
+    const untouched = left.manager.getEntries().filter(e => e.type === 'custom' && e.customType === 'infinite-chat.profile');
+    assert.deepEqual(untouched.map(e => e.type === 'custom' && e.data), [{ name: 'busy' }], 'no rebinding: the session keeps its owner');
+
+    // A session bound under a profile's old name titles the dialog with the resolved name.
+    writeFileSync(join(dir, 'home', 'renames.json'), '{"renamed-old":"busy"}');
+    const renamedAsked: string[] = [];
+    const renamed = await start(dir, { select: async title => { renamedAsked.push(title.split('\n')[0]); return undefined; } }, 'renamed-old', true);
+    sessions.push(renamed.session);
+    assert.deepEqual(renamedAsked, ['busy is open in another window']);
+    assert.match(renamed.errors.join('\n'), /Profile already running/);
   } finally {
     for (const session of sessions) { await session.extensionRunner.emit({ type: 'session_shutdown', reason: 'quit' }); session.dispose(); }
     await unlock?.(); await sleep(50);
