@@ -17,5 +17,6 @@ type: decision
 - 品牌全改 InfiniteChat：命令 `/infinite-chat`，flag `--infinite-chat-*`（旧 `--optchat-*` 仍注册为别名），绑定键 `infinite-chat.profile`（读旧 `optchat.profile` 兼容旧 session）。
 - 旧 profile **不自动迁移**：留在 `~/.optchat`，picker 里 `Old profiles from ~/.optchat` 折叠菜单选中才转换（`importLegacyProfile` 复制、排除 .sock/.lock、补 profile.json、unscoped 待认领），另有 Convert all（必先弹 ui.confirm 列名单；子菜单 Esc=取消——曾因 `choice===undefined` 落入 convert-all 分支致 Esc 误触全量转换，已修 b65893e）；resume/flag/RPC 绑定按需自动转换；`INFINITE_CHAT_NO_LEGACY=1` 隐藏；自定义 INFINITE_CHAT_HOME 永不读宿主 ~/.optchat。
 - 依赖必须用上游 package-lock.json 锁定（pi-coding-agent 1.0.2）；不带 lock 安装会因 `@earendil-works/pi-codemode` 导入缺失全挂。
+- ask 工具（49e066e，源启微信文章 pi-episodes 的 ask）：`ask(question, id, n)` 把行 id+n（n 2 的幂，同 zoom）或子 agent 整个 run（字符串 id）发给 profile 的 compactor 模型（复用 reasoningFor/retryTransient，sessionId 'infinite-chat-ask'，无自定义 cache marks——cachePayload 只认 view 壳），只回答案，usage 记 'ask' 角色。工具 execute 第 5 参才有 ctx.modelRegistry（签名 toolCallId, params, signal, onUpdate, ctx）。超大归档 ASK_CAP=200k 字符首尾各留（头=任务、尾=结论）。zoom/ask 结果附带过期文件注解（正则抽绝对/相对路径含裸文件名，裸名按 process.cwd() 解析；statSync mtime 比行 date+2s，≤3 个列出、余 '+N more'）——故意拉取式：推进 view 会破坏字节稳定前缀毁缓存。加新常改提示词文本时，ZOOM_ONLY/ZOOM_AND_SEARCH 常量必须与 VIEW_DOC 正文同步改，否则 allowSearch 的 replace 失效（settings 两测会红）。
 
 **Related**: [[infinite-chat-env-gotchas]]
