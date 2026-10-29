@@ -199,8 +199,9 @@ export async function profileOwner(name: string): Promise<string | undefined> {
 }
 const agentsTemplate = (name: string) => `# ${name}\n\nThis is the ${name} profile.\nAdd your personal instructions here.\n`;
 /** Renames a profile by renaming its directory. Refuses an invalid or taken new name, a missing profile, and a profile
- * whose lock is held (including the caller's own session — switch away first). An AGENTS.md still carrying the exact
- * creation template is refreshed with the new name; an edited one is left alone. Records the rename so old sessions resume. */
+ * whose lock is held — including the caller's own session, which releases its lock first when it renames the profile
+ * it has open. An AGENTS.md still carrying the exact creation template is refreshed with the new name; an edited one is
+ * left alone. Records the rename so old sessions resume. */
 export async function renameProfile(from: string, to: string): Promise<string> {
   if (to === from) throw new Error('The new name is the same as the old one.');
   const source = profilePath(from), target = profilePath(to); // profilePath validates both spellings

@@ -273,14 +273,23 @@ export default function infiniteChat(pi: ExtensionAPI) {
       if (!oldName) return undefined;
       const fresh = (await ctx.ui.input(`New name for ${oldName}`, '1–64 lowercase letters, digits, hyphens, underscores'))?.trim();
       if (!fresh || fresh === oldName) return undefined;
+      // Renaming the profile this session has open: reject a bad spelling or a taken name first, then release the
+      // lock with the same teardown a profile switch does, so the rename can pass its busy check. Returning the
+      // name makes the caller reopen it — a switch restarts the session on the new name, startup just opens it.
+      const self = oldName === active?.name;
+      if (self) {
+        try { if (existsSync(profilePath(fresh))) throw new Error(`Profile already exists: ${fresh}`); }
+        catch (error) { ctx.ui.notify(`Could not rename ${oldName}: ${errorText(error)}`, 'error'); return undefined; }
+        await stop();
+        stopping = false; // this session continues: the caller reopens the profile right away
+      }
       try { await renameProfile(oldName, fresh); }
       catch (error) {
-        if (error instanceof ProfileBusyError && error.owner.includes(`PID ${process.pid}`))
-          ctx.ui.notify(`${oldName} is the profile open in this session; switch to another profile first, then rename it.`, 'warning');
-        else ctx.ui.notify(`Could not rename ${oldName}: ${error instanceof Error ? error.message : String(error)}`, 'error');
-        return undefined;
+        ctx.ui.notify(`Could not rename ${oldName}: ${error instanceof Error ? error.message : String(error)}`, 'error');
+        return self ? oldName : undefined; // a torn-down profile is reopened under its old name
       }
-      ctx.ui.notify(`Renamed ${oldName} to ${fresh}. Sessions still bound to ${oldName} will resume as ${fresh}.`, 'info');
+      ctx.ui.notify(self ? `Renamed ${oldName} to ${fresh}; reopening it.`
+        : `Renamed ${oldName} to ${fresh}. Sessions still bound to ${oldName} will resume as ${fresh}.`, 'info');
       return fresh; // open the renamed profile, like converting an old one does
     }
     if (selected !== '+ Create profile') return selected;
