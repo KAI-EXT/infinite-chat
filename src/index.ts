@@ -16,6 +16,7 @@ import { saveImages } from './images.ts';
 import { asUser, boundedMessage, atWork, buildContext, logMessage, previousExchange, refreshedRun, refreshBudget, refreshFraction, refreshPoint, reportReceipt, REPORT_RECEIPT, REPORT_TYPE, RUN_BOUNDARY, textContent, typedText } from './transcript.ts';
 import { registerReportRenderer, type ReportDetails } from './report-message.ts';
 import { askTool, memoryTools, result, searchTool } from './tools.ts';
+import { listSessions, type SessionSummary } from './sessions.ts';
 import { Children, loadedBuiltins, modelsTool, refreshContextFiles, TASKS } from './agents.ts';
 import { isActiveRun, type RunInfo } from './runs.ts';
 import { exportBrowser } from './browser.ts';
@@ -768,6 +769,31 @@ export default function infiniteChat(pi: ExtensionAPI) {
       pi.appendEntry(binding, { name: opened });
       return;
     }
+    if (action === 'sessions') {
+      if (ctx.mode !== 'tui') throw new Error('/infinite-chat sessions requires interactive Pi. Use pi -r or /resume.');
+      if (!ctx.isIdle() || active?.children.active) throw new Error('Finish or stop active work before switching sessions.');
+      const current = ctx.sessionManager.getSessionFile();
+      const items = (await listSessions(ctx.cwd)).filter(item => item.path !== current);
+      if (!items.length) { ctx.ui.notify('No other sessions in this directory yet. They appear here once conversations have messages.', 'info'); return; }
+      const label = (item: SessionSummary) => {
+        const at = new Date(item.mtimeMs), two = (n: number) => String(n).padStart(2, '0');
+        const when = `${two(at.getMonth() + 1)}-${two(at.getDate())} ${two(at.getHours())}:${two(at.getMinutes())}`;
+        const mark = item.resolved === active?.name ? ' · open here' : item.owner !== undefined ? ' · busy'
+          : item.legacy ? ' · legacy' : item.missing ? ' · missing profile' : '';
+        const size = `${item.userMessages} msg${item.userMessages === 1 ? '' : 's'}`;
+        return `${when} · ${item.resolved ?? '(no profile)'}${mark} · ${size}${item.preview ? ` · ${item.preview}` : ''}`;
+      };
+      const labels = items.map(label);
+      const picked = await ctx.ui.select('Resume which session? (newest first)\nThe profile follows the session: this one is released, the bound one opens.', labels);
+      if (picked === undefined) return;
+      const item = items[labels.indexOf(picked)];
+      if (!item) return;
+      // session_shutdown releases this window's profile; the new session's session_start opens its bound one —
+      // rename and legacy conversion follow, and a held profile lands in the busy dialog with its way out first.
+      const switched = await ctx.switchSession(item.path);
+      if (switched?.cancelled) return;
+      return;
+    }
     if (action === 'profile') {
       if (!ctx.isIdle() || active?.children.active) throw new Error('Finish or stop active work before switching profiles.');
       const selected = await chooseProfile(ctx);
@@ -795,7 +821,7 @@ export default function infiniteChat(pi: ExtensionAPI) {
       if (ctx.hasUI) execFile(isWindows ? 'explorer.exe' : process.platform === 'darwin' ? 'open' : 'xdg-open', [file], error => { if (error && (!isWindows || error.code === 'ENOENT')) ctx.ui.notify(`Open ${file}`, 'info'); });
       ctx.ui.notify(file, 'info'); return;
     }
-    if (action) throw new Error('Use /infinite-chat [profile|settings|model|agents|usage|activity|instructions|browse|import].');
+    if (action) throw new Error('Use /infinite-chat [profile|sessions|settings|model|agents|usage|activity|instructions|browse|import].');
   };
   pi.registerCommand('complete', { description: 'End this connected conversation and hand off to the main agent', handler: async (_args, ctx) => {
     if (!remote) { ctx.ui.notify('/complete is for connected subagent windows.', 'info'); return; }
