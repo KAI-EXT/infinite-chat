@@ -1,5 +1,11 @@
+import { statSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { Type, type Static } from 'typebox';
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
+import type { AssistantMessage } from '@earendil-works/pi-ai';
+import type { ModelRegistry } from '@earendil-works/pi-coding-agent';
+import { answer } from './ask.ts';
+import type { ModelChoice } from './compactor.ts';
 import { flat, PAGE, start, type Memory } from './memory.ts';
 import { loadImages } from './images.ts';
 import { runTranscript } from './transcript.ts';
@@ -49,7 +55,9 @@ export function memoryTools(memory: () => Memory, runs?: (id: string) => readonl
           // A model may quote a message id; eight digits can be a run id (src/agents.ts), so those never open a message.
           if (!/^\d+$/.test(id) || id.length === 8) throw new Error(`No run ${id}.`);
         }
-        const m = memory(), text = m.zoom(Number(id), n, offset, limit), page = result(text);
+        const m = memory(), text = m.zoom(Number(id), n, offset, limit);
+        // Files the page names that changed since the line was written, so an old note can't mislead quietly.
+        const page = result(text + staleFiles(m, Number(id), text));
         // A message's images come back with its text, as read returns a PNG; summaries stay text.
         return n === 1 ? { ...page, content: [...page.content, ...await loadImages(m.store, text)] } : page;
       } },
@@ -63,3 +71,68 @@ export const searchTool = (memory: () => Memory) => ({ name: 'search', label: 'S
   description: `Find the original messages that contain text (plain text, any case), newest first, ${SEARCH_PAGE} at a time; before: id continues with older ones. zoom(id, 1) gives a hit whole.`,
   parameters: Type.Object({ text: Type.String({ minLength: 1 }), before: Type.Optional(Type.Integer({ minimum: 0 })) }),
   async execute(_id: string, args: { text: string; before?: number }) { return result(searchPage(memory(), args.text, args.before)); } });
+
+/** The most archive characters one ask sends the model; a 128K-token context holds roughly three times this. */
+export const ASK_CAP = 200_000;
+
+/** Head and tail of a huge archive: the head holds the task, the tail the conclusion, the middle can be zoomed if missed. */
+export function askArchive(text: string) {
+  if (text.length <= ASK_CAP) return text;
+  const head = 80_000;
+  return `${text.slice(0, head)}\n[… ${(text.length - ASK_CAP).toLocaleString('en-US')} characters cut …]\n${text.slice(-(ASK_CAP - head))}`;
+}
+
+const PATHS = /(?:\/|~\/)[\w@.+_-]+(?:\/[\w@.+_-]+)+/g;
+const RELATIVE = /(?<![\w/.-])(?:[\w@._-]+\/)*[\w@._-]+\.(?:ts|tsx|js|mjs|cjs|jsx|json|md|py|go|rs|java|rb|php|c|h|cpp|sh|yaml|yml|toml|html|css|sql|tf)\b/g;
+
+/** Files the text names that changed after the line was written, so an old note can't mislead quietly; '' when none.
+ * Pull-based on purpose: pushing staleness into the view would break its byte-stable cached prefix. */
+export function staleFiles(memory: Memory, id: number, text: string) {
+  const leaf = memory.root[id];
+  if (!leaf) return '';
+  const since = Date.parse(leaf.date) + 2000;
+  const names = new Set<string>();
+  for (const pattern of [PATHS, RELATIVE]) for (const m of text.matchAll(pattern)) names.add(m[0].replace(/[.,;:)'"]+$/, ''));
+  const changed: string[] = [];
+  let extra = 0, probed = 0;
+  for (const name of names) {
+    if (probed >= 40) break;
+    probed++;
+    let at: number;
+    try { at = statSync(name.startsWith('~/') ? homedir() + name.slice(1) : name).mtimeMs; } catch { continue; }
+    if (at <= since) continue;
+    if (changed.length < 3) changed.push(name); else extra++;
+  }
+  return changed.length ? `\n[files named here changed after this line: ${changed.join(', ')}${extra ? ` +${extra} more` : ''}]` : '';
+}
+
+const askParameters = Type.Object({ question: Type.String({ minLength: 1 }),
+  id: Type.Union([Type.Integer({ minimum: 0 }), Type.String({ minLength: 1 })]), n: Type.Optional(Type.Integer({ minimum: 1 })) });
+
+/** Ask one question about archived memory through the profile's compactor model, so a huge line or a
+ * subagent's whole chat never enters the asking agent's context; only the answer does. */
+export const askTool = ({ memory, runs, choice, onUsage }: {
+  memory: () => Memory; runs?: (id: string) => readonly AgentMessage[] | undefined;
+  choice: () => ModelChoice; onUsage?: (message: AssistantMessage, session: string) => void;
+}) => ({ name: 'ask', label: 'Ask memory',
+  description: `Answer one question about archived memory without loading it into context: ask('what did the user decide about X?', id, n) reads line id+n whole (n a power of 2, like zoom) and returns only the answer; ask('...', "<run id>") does the same for a subagent's whole chat. Prefer it over zoom when the text is huge and one fact or a summary is enough; zoom still gives the text itself.`,
+  parameters: askParameters,
+  async execute(_id: string, { question, id, n = 1 }: Static<typeof askParameters>,
+    _signal: AbortSignal | undefined, _onUpdate: unknown, ctx?: { modelRegistry?: ModelRegistry; sessionManager?: { getSessionId(): string } }) {
+    const registry = ctx?.modelRegistry;
+    if (!registry) throw new Error('No model registry in this context.');
+    let archive: string, note = '';
+    if (typeof id === 'string') {
+      const messages = runs?.(id);
+      if (!messages) throw new Error(`No run ${id}.`);
+      archive = runTranscript(messages);
+    } else {
+      const m = memory();
+      if (!Number.isSafeInteger(id) || id < 0 || id >= m.root.length) throw new Error(`No message ${id}.`);
+      archive = n === 1 ? `${id}+1|${m.root[id].kind}: ${m.root[id].text}` : m.zoom(id, n);
+      note = staleFiles(m, id, archive);
+    }
+    const text = await answer(registry, choice, askArchive(archive), question,
+      message => onUsage?.(message, ctx?.sessionManager?.getSessionId() ?? ''), _signal);
+    return result(text + note);
+  } });

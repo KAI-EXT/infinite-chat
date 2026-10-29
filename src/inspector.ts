@@ -19,7 +19,7 @@ export const short = (n: number) => {
 };
 const dollars = (n: number) => `$${n.toFixed(2)}`;
 const cached = (u: Usage) => { const input = u.input + u.cacheRead + u.cacheWrite; return `${input ? Math.round(100 * u.cacheRead / input) : 0}%`; };
-const roleNames: Record<UsageRole, string> = { main: 'main', subagent: 'subagents', compactor: 'compactor', import: 'import' };
+const roleNames: Record<UsageRole, string> = { main: 'main', subagent: 'subagents', compactor: 'compactor', import: 'import', ask: 'ask' };
 export const elapsed = (ms: number) => ms < 60_000 ? `${Math.max(0, Math.floor(ms / 1000))}s` : `${Math.floor(ms / 60_000)}m ${Math.floor(ms / 1000) % 60}s`;
 /** Shortens plain text with an ellipsis, preferring a word boundary. */
 export function fit(text: string, width: number) {
@@ -140,7 +140,7 @@ export class Inspector implements Component, Focusable {
     if (!entries.length) lines.push(color('muted', 'No usage in this period.'));
     else {
       lines.push(`${color('accent', dollars(total.cost.total))} estimated · ${short(total.totalTokens)} tokens · ${cached(total)} cached`, '');
-      const order = ['main', 'subagent', 'compactor', 'import'] as const;
+      const order = ['main', 'subagent', 'compactor', 'import', 'ask'] as const;
       const sorted = groups.sort((a, b) => order.indexOf(a.role) - order.indexOf(b.role) || b.usage.cost.total - a.usage.cost.total);
       const rows = sorted.map((g, i) => [i && sorted[i - 1].role === g.role ? '' : roleNames[g.role], oneLine(g.model), dollars(g.usage.cost.total),
         `${total.cost.total ? Math.round(100 * g.usage.cost.total / total.cost.total) : 0}%`, short(g.usage.output), cached(g.usage)]);

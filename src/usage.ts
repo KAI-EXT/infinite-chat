@@ -6,7 +6,7 @@ import type { SessionEntry } from '@earendil-works/pi-coding-agent';
 import { record } from './cache.ts';
 import { appendJson } from './store.ts';
 
-export type UsageRole = 'main' | 'subagent' | 'compactor' | 'import';
+export type UsageRole = 'main' | 'subagent' | 'compactor' | 'import' | 'ask';
 export const ranges = ['This session', 'Last hour', 'Today', 'Last 7 days', 'All time'] as const;
 export type UsageRange = typeof ranges[number];
 export interface UsageEntry {
@@ -22,7 +22,7 @@ function validUsage(value: unknown): value is Usage {
 }
 function validEntry(value: unknown): value is UsageEntry {
   return record(value) && typeof value.date === 'string' && Number.isFinite(Date.parse(value.date))
-    && ['main', 'subagent', 'compactor', 'import'].includes(String(value.role)) && typeof value.model === 'string'
+    && ['main', 'subagent', 'compactor', 'import', 'ask'].includes(String(value.role)) && typeof value.model === 'string'
     && ['id', 'provider', 'session', 'runId'].every(k => value[k] === undefined || typeof value[k] === 'string') && validUsage(value.usage);
 }
 export function emptyUsage(): Usage {
@@ -61,7 +61,7 @@ export class UsageLedger {
     appendJson(this.file, entry);
     this.entries.push(entry); if (entry.id) this.ids.add(entry.id);
   }
-  compression(message: AssistantMessage, role: 'compactor' | 'import', session: string) {
+  compression(message: AssistantMessage, role: 'compactor' | 'import' | 'ask', session: string) {
     this.add({ id: randomUUID(), date: new Date().toISOString(), role, session, provider: message.provider, model: message.model, usage: message.usage });
   }
   backfill(entries: SessionEntry[], session: string, role: 'main' | 'subagent' = 'main', runId?: string) {

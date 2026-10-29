@@ -15,7 +15,7 @@ import { cachePayload, record } from './cache.ts';
 import { saveImages } from './images.ts';
 import { asUser, boundedMessage, atWork, buildContext, logMessage, previousExchange, refreshedRun, refreshBudget, refreshFraction, refreshPoint, reportReceipt, REPORT_RECEIPT, REPORT_TYPE, RUN_BOUNDARY, textContent, typedText } from './transcript.ts';
 import { registerReportRenderer, type ReportDetails } from './report-message.ts';
-import { memoryTools, result, searchTool } from './tools.ts';
+import { askTool, memoryTools, result, searchTool } from './tools.ts';
 import { Children, loadedBuiltins, modelsTool, refreshContextFiles, TASKS } from './agents.ts';
 import { isActiveRun, type RunInfo } from './runs.ts';
 import { exportBrowser } from './browser.ts';
@@ -642,6 +642,11 @@ export default function infiniteChat(pi: ExtensionAPI) {
   const [zoom, date] = memoryTools(() => required().memory, id => required().children.transcript(id));
   pi.registerTool(zoom); pi.registerTool(date);
   pi.registerTool({ ...searchTool(() => required().memory), defaultActive: false });
+  pi.registerTool(askTool({
+    memory: () => required().memory, runs: id => required().children.transcript(id),
+    choice: () => required().config.compactor,
+    onUsage: (message, session) => required().usage.compression(message, 'ask', session),
+  }));
   // The tool and its prompt line change together, once per toggle, so the cached prefix is otherwise stable.
   // Synced on save too: a report turn started while idle reuses the tool set without before_agent_start.
   const syncSearch = ({ memorySearch }: ProfileConfig) => {

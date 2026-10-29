@@ -16,6 +16,7 @@ A Pi extension that gives you one endless chat per profile, remembered through a
 | Title | `π work · 2 agents` | `π work · glm-5.3-flash (sub high / cmp medium) · 2 agents` |
 | Footer | `OptChat: work · 12 messages …` | `InfiniteChat: work · sub zai-coding-cn/glm-5.3-flash(high) · cmp zai-coding-cn/glm-5.3-flash(medium) · 12 messages …` |
 | Command | `/optchat` | `/infinite-chat` (flags: `--infinite-chat-profile`, `--infinite-chat-connect`, `--infinite-chat-agent`; the `--optchat-*` spellings still work) |
+| Memory tools | `zoom` loads whole text | **`ask(question, id, n)`**: the profile's compactor model reads the line (or a subagent's whole run) and returns only the answer, so huge archives never enter the context; `zoom`/`ask` results also note files that changed after the line was written |
 
 Everything else — the OptChat recipe numbers, summary tree, zoom/date, subagents, imports, connected windows, usage and activity inspectors — works as in upstream. See the [upstream README](https://github.com/jonaslsaa/pi-optchat#readme) for the full tour.
 

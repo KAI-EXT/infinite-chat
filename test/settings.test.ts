@@ -97,7 +97,7 @@ test('with Memory search on, a subagent gets the search tool and its prompt line
     const session = c.live(child)!.session;
     assert.ok(session.getActiveToolNames().includes('search'));
     assert.ok(session.systemPrompt.includes(SEARCH_DOC.trim()));
-    assert.match(session.systemPrompt, /zoom and search are your only\s+allowed mechanisms/);
+    assert.match(session.systemPrompt, /zoom, ask and search are your only\s+allowed mechanisms/);
   } finally { await close(); removeDir(dir); }
 });
 
@@ -295,7 +295,7 @@ test('Memory search turned on and off in /infinite-chat settings adds and remove
     await session.bindExtensions({ uiContext: { ...session.extensionRunner.getUIContext(), custom }, mode: 'tui' });
     // Pi declares the tools on the leading system message, next to the prompt.
     const search = ({ messages: [system] }: Context) => system.role === 'system'
-      ? [!!system.toolsAdded?.some(t => t.name === 'search'), JSON.stringify(system.content).includes('search(text)'), JSON.stringify(system.content).includes('zoom and search are')] : [];
+      ? [!!system.toolsAdded?.some(t => t.name === 'search'), JSON.stringify(system.content).includes('search(text)'), JSON.stringify(system.content).includes('zoom, ask and search are')] : [];
     await session.prompt('Hello.');
     assert.deepEqual(search(turns.at(-1)!), [false, false, false], 'off by default');
     await session.prompt('/infinite-chat settings');
