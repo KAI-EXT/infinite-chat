@@ -11,6 +11,7 @@ type: decision
 **How to apply**:
 - 数据根目录 `~/.infinite-chat`（env `INFINITE_CHAT_HOME`，旧 `OPTCHAT_HOME` 仍兼容；测试沙盒靠它）。
 - profile 目录作用域存在 `profiles/<name>/profile.json`（cwd/createdAt/lastUsedAt）；无 cwd 的 profile 在所有目录可见，首次打开即认领当前目录。resume 永远以 session 绑定为准，不受目录过滤影响。
+- rename profile：picker 里 Rename profile 项改目录名（模型/记忆/历史不动）；锁被持有（含本 session 自己的 profile）拒改——profileOwner() 探 socket 候选，超时视作 busy。旧绑定自愈靠 `<dataHome>/renames.json`（old→new 链折叠、改回自清理）：openProfile 名字不存在先查映射再查 legacy；openProfile 返回解析后的名字，session_start 用它 appendEntry 重绑新名（session 只自愈一次，之后直连）。AGENTS.md 若仍是创建模板原文则刷新名字，用户改过则不动。
 - 全局默认配置 `~/.infinite-chat/config.json`：创建 profile 时跑模型向导（subagent+compactor 逐个选，Esc=保留预填），预填取全局 config 缺省用内置默认；选中值烘进 profile config.json；全局文件**不存在时**才把本次选择写入全局（首次播种，notify 提示），之后永不覆写、只能手改；加载时只补缺失键（profile config.json 优先）；非法键逐个丢弃并 warn。向导仅 TUI（chooseProfile 非 TUI 提前返回）。
 - socket 多候选回退（ohos 修复核心）：`socketCandidates()` = `INFINITE_CHAT_SOCK_HOME` > profile 目录（限 sun_path）> `<dataHome>/sock/<hash>` > tmpdir；owner/connector 用同一列表相遇；EADDRINUSE 永远不落到下一候选（不能遮蔽真实 owner）。
 - 品牌全改 InfiniteChat：命令 `/infinite-chat`，flag `--infinite-chat-*`（旧 `--optchat-*` 仍注册为别名），绑定键 `infinite-chat.profile`（读旧 `optchat.profile` 兼容旧 session）。
