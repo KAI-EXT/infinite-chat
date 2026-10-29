@@ -9,7 +9,7 @@ import { Type } from 'typebox';
 import { Memory } from './memory.ts';
 import { atomicWrite, storeFor } from './store.ts';
 import { createCompressor, type ModelChoice } from './compactor.ts';
-import { createProfile, creationSeed, dataHome, globalConfigExists, globalConfigPath, groupProfiles, holdProfile, importLegacyProfile, instructions, isWindows, lastProfile, listLegacyProfiles, listProfilesMeta, loadConfig, loadGlobalConfig, profilePath, rememberProfile, saveConfig, seedGlobalConfig, ProfileBusyError, type ProfileConfig } from './profiles.ts';
+import { createProfile, creationSeed, dataHome, globalConfigExists, globalConfigPath, groupProfiles, holdProfile, importLegacyProfile, instructions, isWindows, lastProfile, listLegacyProfiles, listProfiles, listProfilesMeta, loadConfig, loadGlobalConfig, profilePath, rememberProfile, renameProfile, renamedProfile, saveConfig, seedGlobalConfig, ProfileBusyError, type ProfileConfig } from './profiles.ts';
 import { allowSearch, CONTINUITY, IMPORT_GUIDANCE, MASTER, modelsHint, SEARCH_DOC, TURN_REFRESHED, VIEW_DOC } from './prompts.ts';
 import { cachePayload, record } from './cache.ts';
 import { saveImages } from './images.ts';
@@ -224,6 +224,7 @@ export default function infiniteChat(pi: ExtensionAPI) {
   const OTHERS = '── Profiles from other directories…';
   const LEGACY = '── Old profiles from ~/.optchat (select to convert)…';
   const LEGACY_CONVERT_ALL = '__convert-all__';
+  const RENAME = 'Rename profile';
   const chooseProfile = async (ctx: ExtensionContext): Promise<string | undefined> => {
     // Outside the TUI (print, json, RPC hosts) never pick or create a profile: a dialog would hang the host, and a guess could write into the wrong memory.
     if (ctx.mode !== 'tui') return undefined;
@@ -233,7 +234,7 @@ export default function infiniteChat(pi: ExtensionAPI) {
     // project's profiles are the ones Enter reaches. Unscoped profiles (created elsewhere, or converted) show here too.
     const last = lastProfile(ctx.cwd);
     const entries = last && here.some(({ name }) => name === last) ? [...here].sort((a, b) => Number(b.name === last) - Number(a.name === last)) : here;
-    const labels = [...entries.map(({ name }) => name), ...others.length ? [OTHERS] : [], ...legacy.length ? [LEGACY] : [], '+ Create profile'];
+    const labels = [...entries.map(({ name }) => name), ...others.length ? [OTHERS] : [], ...legacy.length ? [LEGACY] : [], '+ Create profile', RENAME];
     const selected = await ctx.ui.select('InfiniteChat profile', labels);
     if (selected === OTHERS) {
       const byLabel = new Map<string, string>(others.map(({ name, meta }) => [`${name} — ${meta.cwd ?? 'directory not recorded'}`, name]));
@@ -265,6 +266,23 @@ export default function infiniteChat(pi: ExtensionAPI) {
       catch (error) { ctx.ui.notify(`Could not convert ${choice}: ${error instanceof Error ? error.message : String(error)}`, 'error'); return undefined; }
       return choice;
     }
+    if (selected === RENAME) {
+      const names = listProfiles();
+      if (!names.length) { ctx.ui.notify('No profiles to rename yet.', 'info'); return undefined; }
+      const oldName = await ctx.ui.select('Rename which profile?', names);
+      if (!oldName) return undefined;
+      const fresh = (await ctx.ui.input(`New name for ${oldName}`, '1–64 lowercase letters, digits, hyphens, underscores'))?.trim();
+      if (!fresh || fresh === oldName) return undefined;
+      try { await renameProfile(oldName, fresh); }
+      catch (error) {
+        if (error instanceof ProfileBusyError && error.owner.includes(`PID ${process.pid}`))
+          ctx.ui.notify(`${oldName} is the profile open in this session; switch to another profile first, then rename it.`, 'warning');
+        else ctx.ui.notify(`Could not rename ${oldName}: ${error instanceof Error ? error.message : String(error)}`, 'error');
+        return undefined;
+      }
+      ctx.ui.notify(`Renamed ${oldName} to ${fresh}. Sessions still bound to ${oldName} will resume as ${fresh}.`, 'info');
+      return fresh; // open the renamed profile, like converting an old one does
+    }
     if (selected !== '+ Create profile') return selected;
     const name = (await ctx.ui.input('New profile name', 'work or personal'))?.trim();
     if (!name) return undefined;
@@ -283,15 +301,25 @@ export default function infiniteChat(pi: ExtensionAPI) {
       ctx.ui.notify(`Saved these models to ${globalConfigPath()} as the default for new profiles; edit that file to change them.`, 'info');
     return name;
   };
-  const openProfile = async (name: string, ctx: ExtensionContext) => {
+  const openProfile = async (requested: string, ctx: ExtensionContext) => {
+    let name = requested;
     let dir = profilePath(name);
     if (!existsSync(dir)) {
+      // A renamed profile: the session kept the name it was bound with, so resume maps it through the rename record.
+      const fresh = renamedProfile(requested);
+      if (fresh !== undefined) {
+        ctx.ui.notify(`Profile ${requested} was renamed to ${fresh}; opening ${fresh}.`, 'info');
+        name = fresh;
+        dir = profilePath(name);
+      }
       // An unconverted old pi-optchat profile (a resumed session bound via optchat.profile, a flag, or a command):
       // convert on demand, so resume stays automatic while unbound profiles wait for an explicit pick.
-      if (!listLegacyProfiles().includes(name)) throw new Error(`Profile ${name} does not exist. Use /infinite-chat profile to create or convert it.`);
-      importLegacyProfile(name);
-      dir = profilePath(name);
-      ctx.ui.notify(`Converted old pi-optchat profile ${name} into ${dataHome()}.`, 'info');
+      else if (!listLegacyProfiles().includes(requested)) throw new Error(`Profile ${requested} does not exist. Use /infinite-chat profile to create or convert it.`);
+      else {
+        importLegacyProfile(requested);
+        dir = profilePath(requested);
+        ctx.ui.notify(`Converted old pi-optchat profile ${requested} into ${dataHome()}.`, 'info');
+      }
     }
     const unlock = await holdProfile(storeFor(dir), dir, name, `${name} · PID ${process.pid} · ${hostname()} · ${ctx.cwd}`, warning => ctx.ui.notify(warning, 'warning'));
     let openingMemory: Memory | undefined;
@@ -345,6 +373,7 @@ export default function infiniteChat(pi: ExtensionAPI) {
       await openingMemory?.close();
       await unlock(); throw error;
     }
+    return name; // the resolved name: a rename may have moved the profile since this session bound it
   };
 
   pi.on('session_start', async (_event, ctx) => {
@@ -378,7 +407,7 @@ export default function infiniteChat(pi: ExtensionAPI) {
         if (!name) { status(ctx); return; }
         try {
           if (connect === 'join') joined = await joinProfile(name);
-          else await openProfile(name, ctx);
+          else name = await openProfile(name, ctx); // a renamed profile re-binds the session to its new name
           break;
         } catch (error) {
           if (error instanceof ProfileBusyError && connect === 'auto') { joined = await joinProfile(name); break; }
@@ -709,8 +738,8 @@ export default function infiniteChat(pi: ExtensionAPI) {
       const first = `Run /infinite-chat profile ${named ?? '<name>'} as the first message of a new session, or start Pi with --infinite-chat-profile <name>.`;
       if (!named || active || remote || joined || ctx.sessionManager.getEntries().some(e => e.type === 'message' || e.type === 'custom_message')) throw new Error(first);
       // As with a requested profile: one that fails to open blocks prompts instead of running without memory.
-      try { await openProfile(named, ctx); } catch (error) { fault = errorText(error); throw error; }
-      pi.appendEntry(binding, { name: named });
+      const opened = await openProfile(named, ctx).catch(error => { fault = errorText(error); throw error; });
+      pi.appendEntry(binding, { name: opened });
       return;
     }
     if (action === 'profile') {

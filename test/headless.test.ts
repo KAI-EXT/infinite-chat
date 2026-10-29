@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { createAssistantMessageEventStream, type AssistantMessage } from '@earendil-works/pi-ai';
 import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager, type ExtensionFactory, type ExtensionUIContext } from '@earendil-works/pi-coding-agent';
 import infiniteChat from '../src/index.ts';
-import { createProfile, lastProfile, loadConfig, lockProfile, profilePath, rememberProfile, saveConfig } from '../src/profiles.ts';
+import { createProfile, lastProfile, loadConfig, lockProfile, profilePath, rememberProfile, renameProfile, saveConfig } from '../src/profiles.ts';
 import { textContent } from '../src/transcript.ts';
 import { emptyUsage } from '../src/usage.ts';
 import { removeDir } from './support.ts';
@@ -90,6 +90,19 @@ test('--infinite-chat-profile still opens that profile headlessly', async () => 
     assert.match(await pi.ask('Say OK') ?? '', /^OK to: <chat>[^]*Say OK$/, 'the prompt runs with the InfiniteChat view');
     assert.deepEqual(pi.errors, []);
     assert.deepEqual(pi.bindings(), [{ name: 'work' }]);
+    assert.match(pi.sent[0], /You are InfiniteChat/);
+  } finally { await pi.close(); }
+});
+
+test('a session bound to a profile that was since renamed resumes under the new name and re-binds', async () => {
+  const fixture = (name: string) => saveConfig(profilePath(name), { ...loadConfig(profilePath(name)), compactor: { provider: 'fixture', model: 'fixture', thinking: 'off' }, subagent: { provider: 'fixture', model: 'fixture', thinking: 'off' } });
+  createProfile('alpha'); fixture('alpha');
+  await renameProfile('alpha', 'beta');
+  const pi = await headless('print', { bound: 'alpha' });
+  try {
+    assert.match(await pi.ask('Say OK') ?? '', /^OK to: <chat>[^]*Say OK$/, 'the prompt runs with the renamed profile\'s view');
+    assert.deepEqual(pi.errors, []);
+    assert.deepEqual(pi.bindings(), [{ name: 'alpha' }, { name: 'beta' }], 'the session re-binds to the new name, so later resumes skip the lookup');
     assert.match(pi.sent[0], /You are InfiniteChat/);
   } finally { await pi.close(); }
 });

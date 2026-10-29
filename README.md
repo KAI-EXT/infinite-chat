@@ -30,6 +30,8 @@ Restart Pi, run `/infinite-chat`, and choose **+ Create profile** — the profil
 
 Creating a profile runs a short wizard: it shows the **subagent model** and the **compactor model** the profile will use — prefilled from `~/.infinite-chat/config.json` when that exists, otherwise from the built-in defaults — and lets you change each before the profile is created. The choices are baked into the new profile's own `config.json`. If the global `config.json` does not exist yet, your choices are written there too, so the next profile starts from them; from then on the global config only changes when you edit it by hand.
 
+**Rename profile** in the same picker moves a profile to a new name (directory rename in place — models, memory and history stay). A profile that is currently open — here or in another Pi — refuses to be renamed; switch away first. Sessions still bound to the old name keep working: resume maps the old name through `~/.infinite-chat/renames.json` and re-binds to the new one.
+
 ### Coming from pi-optchat
 
 Nothing is copied automatically. Old profiles stay in `~/.optchat` until you convert them: the profile picker (`/infinite-chat profile`) shows a `── Old profiles from ~/.optchat (select to convert)…` section listing what has not been converted yet. Picking one copies it into `~/.infinite-chat` (the original is kept untouched; stale lock sockets and lock files are not copied) and opens it right away. There is also a one-shot "Convert all" entry in the same menu.
@@ -76,6 +78,7 @@ A bind failure that means "this directory cannot hold a socket" (permissions, no
 ```
 ~/.infinite-chat/
 ├── config.json              # global defaults (optional)
+├── renames.json             # renamed profiles: old session bindings resume under the new name
 ├── sock/                    # socket fallback directory
 └── profiles/<name>/
     ├── profile.json         # cwd / createdAt / lastUsedAt (directory scoping)

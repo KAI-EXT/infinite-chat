@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createProfile, creationSeed, dataHome, defaults, globalConfigExists, globalConfigPath, groupProfiles, importLegacyProfile, lastProfile, legacyHome, listLegacyProfiles, listProfilesMeta, loadConfig, loadGlobalConfig, loadMeta, normalizeDir, profilePath, rememberProfile, seedGlobalConfig, socketCandidates } from '../src/profiles.ts';
+import { createProfile, creationSeed, dataHome, defaults, globalConfigExists, globalConfigPath, groupProfiles, importLegacyProfile, lastProfile, legacyHome, listLegacyProfiles, listProfilesMeta, loadConfig, loadGlobalConfig, loadMeta, lockProfile, normalizeDir, profilePath, rememberProfile, renameProfile, renamedProfile, seedGlobalConfig, socketCandidates } from '../src/profiles.ts';
 import { removeDir } from './support.ts';
 
 /** Saves the env vars these tests touch; HOME is already sandboxed by support.ts. */
@@ -129,6 +129,44 @@ test('the creation wizard seeds from the global config or the defaults, and the 
     assert.equal(seedGlobalConfig({ subagent: fallback.subagent, compactor: fallback.compactor }), false, 'an existing global config is never overwritten');
     assert.deepEqual(creationSeed(loadGlobalConfig()).subagent, { provider: 'zai-coding-cn', model: 'glm-5.3-flash', thinking: 'max' }, 'hand edits stay in charge');
     assert.deepEqual(creationSeed(loadGlobalConfig()).compactor, defaults.compactor, 'a missing key still falls back to the defaults');
+  } finally { cleanup(); removeDir(dir); }
+});
+
+test('a profile can be renamed: the directory moves, old session bindings follow, a busy profile refuses', async () => {
+  const dir = fs.mkdtempSync(join(tmpdir(), 'infinite-chat-rename-'));
+  const cleanup = envSandbox();
+  process.env.INFINITE_CHAT_HOME = dir;
+  try {
+    createProfile('old', '/tmp/project-a');
+    createProfile('taken');
+    // Refusals first: nothing below may have moved anything.
+    await assert.rejects(renameProfile('old', 'old'), /same as the old/);
+    await assert.rejects(renameProfile('missing', 'other'), /does not exist/);
+    await assert.rejects(renameProfile('old', 'taken'), /already exists/);
+    await assert.rejects(renameProfile('old', 'Bad Name'), /lowercase/);
+    // A held lock means a running owner (here: this test), and a rename would move the directory out from under it.
+    const unlock = await lockProfile(profilePath('old'), 'holder');
+    await assert.rejects(renameProfile('old', 'new'), /Profile already running/);
+    await unlock();
+    await renameProfile('old', 'new');
+    assert.equal(fs.existsSync(profilePath('old')), false);
+    assert.ok(loadMeta(profilePath('new')).createdAt, 'the metadata travels with the directory');
+    assert.deepEqual(renamedProfile('old'), 'new', 'sessions bound to the old name resolve to the new one');
+    assert.equal(renamedProfile('new'), undefined);
+    assert.equal(renamedProfile('never-bound'), undefined);
+    // An AGENTS.md that still carries the exact creation template is refreshed; an edited one is left alone.
+    assert.equal(fs.readFileSync(join(profilePath('new'), 'AGENTS.md'), 'utf8'), '# new\n\nThis is the new profile.\nAdd your personal instructions here.\n');
+    fs.writeFileSync(join(profilePath('new'), 'AGENTS.md'), '# my own instructions');
+    await renameProfile('new', 'newer');
+    assert.equal(fs.readFileSync(join(profilePath('newer'), 'AGENTS.md'), 'utf8'), '# my own instructions');
+    // Chains collapse on write: old→new followed by new→newer resolves in one hop.
+    assert.deepEqual(renamedProfile('old'), 'newer');
+    assert.deepEqual(JSON.parse(fs.readFileSync(join(dir, 'renames.json'), 'utf8')), { old: 'newer', new: 'newer' });
+    // Renaming back to an earlier name drops the entries that would point at themselves.
+    await renameProfile('newer', 'old');
+    assert.equal(fs.existsSync(profilePath('old')), true);
+    assert.deepEqual(JSON.parse(fs.readFileSync(join(dir, 'renames.json'), 'utf8')), { new: 'old', newer: 'old' });
+    assert.deepEqual(renamedProfile('newer'), 'old');
   } finally { cleanup(); removeDir(dir); }
 });
 

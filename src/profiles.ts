@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, unlinkSync, writeFileSync, type Stats } from 'node:fs';
+import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync, type Stats } from 'node:fs';
 import { createConnection, createServer } from 'node:net';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -162,6 +162,61 @@ export function rememberProfile(name: string, cwd?: string) {
     if (meta.cwd === undefined && cwd !== undefined) meta.cwd = normalizeDir(cwd);
     saveMeta(dir, meta);
   } catch { /* The session binding still works; only the picker's ordering misses this. */ }
+}
+
+/** Profile renames, `<dataHome>/renames.json`: a session keeps the name it was bound with, so resume maps a missing
+ * name through every rename it missed. Chains collapse on write (A→B, then B→C, records A→C and B→C); renaming back
+ * to an earlier name drops the entries that would point at themselves. */
+const renamesPath = () => join(dataHome(), 'renames.json');
+const readRenames = (): Record<string, string> => {
+  try {
+    const value: unknown = JSON.parse(readFileSync(renamesPath(), 'utf8'));
+    if (!record(value)) return {};
+    const map: Record<string, string> = {};
+    for (const [key, entry] of Object.entries(value)) if (typeof entry === 'string') map[key] = entry;
+    return map;
+  } catch { return {}; }
+};
+/** The current name of a profile that has been renamed since a session bound it; undefined when the name is not a rename. */
+export function renamedProfile(name: string): string | undefined {
+  const map = readRenames();
+  let current = map[name];
+  const seen = new Set([name]);
+  while (current !== undefined && map[current] !== undefined && !seen.has(current)) { seen.add(current); current = map[current]; }
+  return current;
+}
+/** Who (if anyone) holds this profile's lock right now. A stale socket nobody answers does not count; one that stops
+ * responding mid-probe counts as held, because renaming a busy profile would move its directory out from under it. */
+export async function profileOwner(name: string): Promise<string | undefined> {
+  const dir = profilePath(name);
+  for (const path of socketCandidates(dir)) {
+    let stat: Stats; try { stat = lstatSync(path); } catch { continue; }
+    if (!stat.isSocket()) continue; // a file squatting on the name is not a live owner
+    try { const owner = await readOwner(path); if (owner !== undefined) return owner; }
+    catch { return 'another Pi instance'; }
+  }
+  return undefined;
+}
+const agentsTemplate = (name: string) => `# ${name}\n\nThis is the ${name} profile.\nAdd your personal instructions here.\n`;
+/** Renames a profile by renaming its directory. Refuses an invalid or taken new name, a missing profile, and a profile
+ * whose lock is held (including the caller's own session — switch away first). An AGENTS.md still carrying the exact
+ * creation template is refreshed with the new name; an edited one is left alone. Records the rename so old sessions resume. */
+export async function renameProfile(from: string, to: string): Promise<string> {
+  if (to === from) throw new Error('The new name is the same as the old one.');
+  const source = profilePath(from), target = profilePath(to); // profilePath validates both spellings
+  if (!existsSync(source)) throw new Error(`Profile does not exist: ${from}`);
+  if (existsSync(target)) throw new Error(`Profile already exists: ${to}`);
+  const owner = await profileOwner(from);
+  if (owner !== undefined) throw new ProfileBusyError(owner);
+  renameSync(source, target);
+  try { if (readFileSync(join(target, 'AGENTS.md'), 'utf8') === agentsTemplate(from)) atomicWrite(join(target, 'AGENTS.md'), agentsTemplate(to)); }
+  catch { /* A missing or unreadable AGENTS.md is the user's content business, not the rename's. */ }
+  const map = readRenames();
+  for (const [key, value] of Object.entries(map)) if (value === from) map[key] = to; // chains: A→B plus B→C records A→C
+  map[from] = to;
+  for (const [key, value] of Object.entries(map)) if (key === value) delete map[key]; // renamed back to an earlier name
+  atomicWrite(renamesPath(), JSON.stringify(map, null, 2) + '\n');
+  return target;
 }
 
 /** The previous pi-optchat data home, offered only while InfiniteChat uses the default home itself: a custom
