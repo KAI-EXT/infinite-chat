@@ -92,17 +92,29 @@ test('a busy profile offers to connect or pick another profile, and picking anot
     assert.ok(inplace.manager.getEntries().some(e => e.type === 'message'), 'the conversation itself is not cleared');
 
     // A session whose bound profile is still running elsewhere (post "Open a different profile instead") shows
-    // another window's conversation: the pick must not rebind it in place, so it starts a fresh session.
+    // another window's conversation: the pick must not rebind that file — it forks the transcript into a new
+    // session bound to the pick, so this window keeps the history and the other window keeps its session.
     const foreignNotes: string[] = [];
-    const foreignPicks = ['Open a different profile instead', 'spare'];
+    const foreignPicks = ['Open a different profile instead', 'home']; // `spare` is held by the inplace session above
     const foreign = await start(dir, { select: async () => foreignPicks.shift(),
       notify: (text, type) => { if (type !== 'error') foreignNotes.push(text); } }, 'busy', true);
     sessions.push(foreign.session);
+    const pool = join(dir, 'sessions');
+    const beforeFork = new Set(readdirSync(pool));
     await foreign.session.prompt('/infinite-chat profile');
-    assert.match(foreignNotes.join('\n'), /stays bound to busy/);
-    assert.match(foreignNotes.join('\n'), /fresh session/);
-    assert.deepEqual(foreign.manager.getEntries().filter(e => e.type === 'custom' && e.customType === 'infinite-chat.profile').map(e => e.type === 'custom' && e.data),
-      [{ name: 'busy' }], 'the foreign conversation keeps its owner');
+    assert.match(foreignNotes.join('\n'), /stays bound to busy/); // from the SWITCH exit, not the switch itself
+    const forkName = readdirSync(pool).find(f => f.endsWith('.jsonl') && !beforeFork.has(f));
+    assert.ok(forkName, 'the fork lands as a new session file in the pool');
+    const originalText = readFileSync(foreign.manager.getSessionFile()!, 'utf8');
+    assert.match(originalText, /"name":"busy"/);
+    assert.doesNotMatch(originalText, /"name":"home"/, 'the original file is not rebound');
+    assert.match(originalText, /earlier turn/, 'the original conversation is untouched');
+    const forkText = readFileSync(join(pool, forkName), 'utf8');
+    assert.match(forkText, /earlier turn/, 'the fork carries the transcript');
+    const forkBindings = forkText.match(/"customType":"infinite-chat\.profile","data":\{"name":"[^"]*"\}/g) ?? [];
+    assert.equal(forkBindings[forkBindings.length - 1], '"customType":"infinite-chat.profile","data":{"name":"home"}',
+      'the fork is bound to the picked profile');
+    assert.match(forkText, /"parentSession":/, 'the fork points back at its source');
 
     // A resumed conversation already belongs to `busy`, so the way out comes first and Connect is deliberate.
     const resumedAsked: string[][] = [];

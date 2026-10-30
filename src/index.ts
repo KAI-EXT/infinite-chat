@@ -16,7 +16,7 @@ import { saveImages } from './images.ts';
 import { asUser, boundedMessage, atWork, buildContext, logMessage, previousExchange, refreshedRun, refreshBudget, refreshFraction, refreshPoint, reportReceipt, REPORT_RECEIPT, REPORT_TYPE, RUN_BOUNDARY, textContent, typedText } from './transcript.ts';
 import { registerReportRenderer, type ReportDetails } from './report-message.ts';
 import { askTool, memoryTools, result, searchTool } from './tools.ts';
-import { listSessions, type SessionSummary } from './sessions.ts';
+import { forkSessionFile, listSessions, type SessionSummary } from './sessions.ts';
 import { Children, loadedBuiltins, modelsTool, refreshContextFiles, TASKS } from './agents.ts';
 import { isActiveRun, type RunInfo } from './runs.ts';
 import { exportBrowser } from './browser.ts';
@@ -452,7 +452,7 @@ export default function infiniteChat(pi: ExtensionAPI) {
             // session, and session_start has no newSession() to switch cleanly. Leave the session without a profile
             // and name the two paths that do work.
             status(ctx);
-            ctx.ui.notify(`This session stays bound to ${shown}. Run /infinite-chat profile to open another profile in a fresh session, or /resume to pick a specific conversation.`, 'info');
+            ctx.ui.notify(`This session stays bound to ${shown}. Run /infinite-chat profile to continue on another profile — the conversation forks, so the other window keeps its session — or /resume to pick a specific conversation.`, 'info');
             return;
           }
           if (choice === CONNECT) { remote = await openConnectedWindow(pi, ctx, name, text => title.show(t => ctx.ui.setTitle(t), text)); fault = undefined; break; }
@@ -801,13 +801,28 @@ export default function infiniteChat(pi: ExtensionAPI) {
       // Switching profiles keeps this window's conversation: the old profile is torn down, the new one opens, and
       // the session re-binds in place (the latest binding wins on resume) — no fresh session, nothing cleared.
       // One state must not rebind: a session bound to a profile another window is running (after "Open a different
-      // profile instead") shows that window's conversation — rewriting it would hijack the other window's session,
-      // so the pick starts a fresh session instead, like it always did.
+      // profile instead") shows that window's conversation — rewriting it would hijack the other window's session.
+      // The pick forks the transcript into a new session file bound to it instead, so this window keeps the
+      // history and the other window keeps its session; only an unforkable (unpersisted) session starts fresh.
       const entries = ctx.sessionManager.getEntries();
       const saved = entries.findLast(e => e.type === 'custom' && (e.customType === binding || e.customType === LEGACY_BINDING));
       const bound = saved?.type === 'custom' && record(saved.data) && typeof saved.data.name === 'string' ? saved.data.name : undefined;
       if (active === undefined && bound !== undefined && bound !== selected
         && await profileOwner(renamedProfile(bound) ?? bound) !== undefined) {
+        const shown = renamedProfile(selected) ?? selected;
+        const pickedOwner = await profileOwner(shown);
+        if (pickedOwner) { ctx.ui.notify(`Cannot switch to ${shown}: it is open in another window (${pickedOwner}).`, 'error'); return; }
+        const source = ctx.sessionManager.getSessionFile();
+        let forked: string | undefined;
+        try { forked = source ? forkSessionFile(source, selected) : undefined; } catch { forked = undefined; }
+        if (forked) {
+          // Deliberately no toast: the session replacement re-renders the transcript when it completes, wiping
+          // anything rendered during it, and the captured ctx is stale afterwards. The outcome is self-evident —
+          // the status bar shows the new profile, the transcript is intact, and the original stays listed in
+          // /infinite-chat sessions under its own profile.
+          await ctx.switchSession(forked);
+          return;
+        }
         ctx.ui.notify(`Switched to ${selected} in a fresh session: this conversation stays bound to ${bound} and is open in another window.`, 'info');
         await ctx.newSession({ setup: async manager => { manager.appendCustomEntry(binding, { name: selected }); } });
         return;

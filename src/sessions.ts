@@ -1,6 +1,7 @@
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { listLegacyProfiles, profileOwner, profilePath, renamedProfile } from './profiles.ts';
 
 /** Pi stores sessions per directory, in `<agentDir>/sessions/<munged-cwd>/*.jsonl`. The same pool holds every
@@ -135,4 +136,31 @@ export async function listSessions(cwd: string): Promise<SessionSummary[]> {
     if (owner !== undefined) for (const summary of summaries) if (summary.resolved === name) summary.owner = owner;
   }));
   return summaries;
+}
+
+/** Copy a session file into a new one (same pool) that ends with a binding to `profileName`.
+ * Used when a session belongs to a profile another window is running: rebinding the file in place would
+ * hijack that window's conversation, so the transcript forks instead — this window keeps the history under
+ * the picked profile, the other window keeps its file untouched. Mirrors pi's own branched-session format:
+ * fresh header (new id/timestamp, `parentSession` pointing back), entries copied verbatim, binding appended
+ * as the last entry so the next `session_start` opens the picked profile. */
+export function forkSessionFile(sourcePath: string, profileName: string): string {
+  const lines = readFileSync(sourcePath, 'utf8').split('\n').filter(line => line.trim() !== '');
+  const header = JSON.parse(lines[0]!) as { type?: string; version?: number; id?: string; cwd?: string };
+  if (header?.type !== 'session') throw new Error(`Not a session file: ${sourcePath}`);
+  const entryId = (): string => randomUUID().replace(/-/g, '').slice(0, 8);
+  let parentId: string | null = null;
+  for (let i = lines.length - 1; i >= 1; i--) {
+    const id = (JSON.parse(lines[i]!) as { id?: string }).id;
+    if (typeof id === 'string') { parentId = id; break; }
+  }
+  const timestamp = new Date().toISOString();
+  const newId = randomUUID();
+  const forkHeader = JSON.stringify({ type: 'session', version: header.version ?? 3, id: newId,
+    timestamp, cwd: header.cwd, parentSession: sourcePath });
+  const binding = JSON.stringify({ type: 'custom', customType: 'infinite-chat.profile',
+    data: { name: profileName }, id: entryId(), parentId, timestamp });
+  const forkPath = join(dirname(sourcePath), `${timestamp.replace(/[:.]/g, '-')}_${newId}.jsonl`);
+  writeFileSync(forkPath, [forkHeader, ...lines.slice(1), binding, ''].join('\n'));
+  return forkPath;
 }
