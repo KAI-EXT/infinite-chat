@@ -45,7 +45,7 @@ test('a busy profile offers to connect or pick another profile, and picking anot
   const sessions: Awaited<ReturnType<typeof start>>['session'][] = [];
   let unlock: (() => Promise<void>) | undefined;
   try {
-    for (const name of ['busy', 'other', 'third']) {
+    for (const name of ['busy', 'other', 'third', 'home', 'spare']) {
       createProfile(name);
       const config = loadConfig(profilePath(name));
       saveConfig(profilePath(name), { ...config, compactor: { provider: 'fixture', model: 'fixture', thinking: 'off' }, subagent: { provider: 'fixture', model: 'fixture', thinking: 'off' } });
@@ -73,6 +73,36 @@ test('a busy profile offers to connect or pick another profile, and picking anot
     assert.deepEqual(switched.errors, []);
     const rebound = switched.manager.getEntries().filter(e => e.type === 'custom' && e.customType === 'infinite-chat.profile');
     assert.deepEqual(rebound.map(e => e.type === 'custom' && e.data), [{ name: 'busy' }, { name: 'third' }], 'the latest binding wins');
+
+    // `/infinite-chat profile` switches in place: the conversation and its messages stay, the new binding wins.
+    // A busy pick is refused without tearing the current profile down; a free pick opens right here.
+    const inplaceNotes: string[] = [], inplaceErrors: string[] = [];
+    const inplacePicks = ['other', 'spare']; // `other` is held by the first session above
+    const inplace = await start(dir, { select: async () => inplacePicks.shift(),
+      notify: (text, type) => { (type === 'error' ? inplaceErrors : inplaceNotes).push(text); } }, 'home', true);
+    sessions.push(inplace.session);
+    await inplace.session.prompt('/infinite-chat profile');
+    assert.match(inplaceErrors.join('\n'), /open in another window/);
+    assert.deepEqual(inplace.manager.getEntries().filter(e => e.type === 'custom' && e.customType === 'infinite-chat.profile').map(e => e.type === 'custom' && e.data),
+      [{ name: 'home' }], 'a busy pick changes nothing');
+    await inplace.session.prompt('/infinite-chat profile');
+    assert.match(inplaceNotes.join('\n'), /Switched to spare/);
+    assert.deepEqual(inplace.manager.getEntries().filter(e => e.type === 'custom' && e.customType === 'infinite-chat.profile').map(e => e.type === 'custom' && e.data),
+      [{ name: 'home' }, { name: 'spare' }], 'the conversation continues under the new profile');
+    assert.ok(inplace.manager.getEntries().some(e => e.type === 'message'), 'the conversation itself is not cleared');
+
+    // A session whose bound profile is still running elsewhere (post "Open a different profile instead") shows
+    // another window's conversation: the pick must not rebind it in place, so it starts a fresh session.
+    const foreignNotes: string[] = [];
+    const foreignPicks = ['Open a different profile instead', 'spare'];
+    const foreign = await start(dir, { select: async () => foreignPicks.shift(),
+      notify: (text, type) => { if (type !== 'error') foreignNotes.push(text); } }, 'busy', true);
+    sessions.push(foreign.session);
+    await foreign.session.prompt('/infinite-chat profile');
+    assert.match(foreignNotes.join('\n'), /stays bound to busy/);
+    assert.match(foreignNotes.join('\n'), /fresh session/);
+    assert.deepEqual(foreign.manager.getEntries().filter(e => e.type === 'custom' && e.customType === 'infinite-chat.profile').map(e => e.type === 'custom' && e.data),
+      [{ name: 'busy' }], 'the foreign conversation keeps its owner');
 
     // A resumed conversation already belongs to `busy`, so the way out comes first and Connect is deliberate.
     const resumedAsked: string[][] = [];

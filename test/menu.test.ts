@@ -18,7 +18,8 @@ test('/infinite-chat shows the profile status as aligned rows and returns the ch
   assert.ok(lines.includes(' Summaries failing: Rate limited'));
   menu.handleInput('j'); menu.handleInput('\r');
   menu.handleInput('\x1b');
-  assert.deepEqual(chosen, ['settings', undefined]);
+  assert.deepEqual(chosen, ['sessions', undefined]);
+  assert.ok(lines.some(line => line.includes('sessions') && line.includes('Resume another conversation in this directory')), 'the menu lists the session picker');
 });
 
 test('/infinite-chat without a profile says so and keeps every action', () => {

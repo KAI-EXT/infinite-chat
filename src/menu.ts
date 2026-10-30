@@ -5,10 +5,11 @@ import { count, oneLine } from './inspector.ts';
 import { frame, showModel } from './settings-page.ts';
 
 /** What `/infinite-chat` offers, in menu order; each is also `/infinite-chat <action>`. */
-export const ACTIONS = ['profile', 'settings', 'model', 'agents', 'usage', 'activity', 'instructions', 'browse', 'import'] as const;
+export const ACTIONS = ['profile', 'sessions', 'settings', 'model', 'agents', 'usage', 'activity', 'instructions', 'browse', 'import'] as const;
 export type MenuAction = typeof ACTIONS[number];
 const DESCRIPTIONS: Record<MenuAction, string> = {
   profile: 'Switch or create a profile',
+  sessions: 'Resume another conversation in this directory',
   settings: 'Models, subagent limits, memory options',
   model: 'Compactor model and effort',
   agents: 'Live agent tree and saved runs',

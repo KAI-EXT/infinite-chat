@@ -9,7 +9,7 @@ import { Type } from 'typebox';
 import { Memory } from './memory.ts';
 import { atomicWrite, storeFor } from './store.ts';
 import { createCompressor, type ModelChoice } from './compactor.ts';
-import { createProfile, creationSeed, dataHome, globalConfigExists, globalConfigPath, groupProfiles, holdProfile, importLegacyProfile, instructions, isWindows, lastProfile, listLegacyProfiles, listProfiles, listProfilesMeta, loadConfig, loadGlobalConfig, profilePath, rememberProfile, renameProfile, renamedProfile, saveConfig, seedGlobalConfig, ProfileBusyError, type ProfileConfig } from './profiles.ts';
+import { createProfile, creationSeed, dataHome, globalConfigExists, globalConfigPath, groupProfiles, holdProfile, importLegacyProfile, instructions, isWindows, lastProfile, listLegacyProfiles, listProfiles, listProfilesMeta, loadConfig, loadGlobalConfig, profileOwner, profilePath, rememberProfile, renameProfile, renamedProfile, saveConfig, seedGlobalConfig, ProfileBusyError, type ProfileConfig } from './profiles.ts';
 import { allowSearch, CONTINUITY, IMPORT_GUIDANCE, MASTER, modelsHint, SEARCH_DOC, TURN_REFRESHED, VIEW_DOC } from './prompts.ts';
 import { cachePayload, record } from './cache.ts';
 import { saveImages } from './images.ts';
@@ -798,7 +798,37 @@ export default function infiniteChat(pi: ExtensionAPI) {
       if (!ctx.isIdle() || active?.children.active) throw new Error('Finish or stop active work before switching profiles.');
       const selected = await chooseProfile(ctx);
       if (!selected || selected === active?.name) return;
-      await ctx.newSession({ setup: async manager => { manager.appendCustomEntry(binding, { name: selected }); } });
+      // Switching profiles keeps this window's conversation: the old profile is torn down, the new one opens, and
+      // the session re-binds in place (the latest binding wins on resume) — no fresh session, nothing cleared.
+      // One state must not rebind: a session bound to a profile another window is running (after "Open a different
+      // profile instead") shows that window's conversation — rewriting it would hijack the other window's session,
+      // so the pick starts a fresh session instead, like it always did.
+      const entries = ctx.sessionManager.getEntries();
+      const saved = entries.findLast(e => e.type === 'custom' && (e.customType === binding || e.customType === LEGACY_BINDING));
+      const bound = saved?.type === 'custom' && record(saved.data) && typeof saved.data.name === 'string' ? saved.data.name : undefined;
+      if (active === undefined && bound !== undefined && bound !== selected
+        && await profileOwner(renamedProfile(bound) ?? bound) !== undefined) {
+        ctx.ui.notify(`Switched to ${selected} in a fresh session: this conversation stays bound to ${bound} and is open in another window.`, 'info');
+        await ctx.newSession({ setup: async manager => { manager.appendCustomEntry(binding, { name: selected }); } });
+        return;
+      }
+      // A busy pick is refused before anything is torn down, so the current profile stays open and usable.
+      const shown = renamedProfile(selected) ?? selected;
+      const owner = await profileOwner(shown);
+      if (owner) { ctx.ui.notify(`Cannot switch to ${shown}: it is open in another window (${owner}).`, 'error'); return; }
+      const previous = active?.name;
+      await stop();
+      stopping = false; // this session continues on the new profile
+      try {
+        const opened = await openProfile(selected, ctx);
+        if (opened !== bound) pi.appendEntry(binding, { name: opened });
+        status(ctx); showTitle(ctx);
+        ctx.ui.notify(`Switched to ${opened}. The conversation continues on this profile.`, 'info');
+      } catch (error) {
+        ctx.ui.notify(`Cannot switch to ${selected}: ${errorText(error)}`, 'error');
+        if (previous) await openProfile(previous, ctx).catch(() => {}); // put the old profile back
+        status(ctx); showTitle(ctx);
+      }
       return;
     }
     if (action === 'settings') {
