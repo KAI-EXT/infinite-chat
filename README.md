@@ -1,61 +1,65 @@
 # InfiniteChat
 
-A Pi extension that gives you one endless chat per profile, remembered through a summary tree instead of compaction — rebuilt from [pi-optchat](https://github.com/jonaslsaa/pi-optchat) with per-directory profiles, session binding, and first-class ohos support.
+简体中文 | [English](README.en.md)
 
-## What it changes from pi-optchat
+一个 Pi 扩展,为每个配置档案 (profile) 提供一段无尽对话,通过摘要树 (summary tree) 而非上下文压缩 (compaction) 来记忆内容。本项目基于 [pi-optchat](https://github.com/jonaslsaa/pi-optchat) 重建,新增了按目录区分的配置档案、会话绑定,以及对 ohos 的一等公民支持。
+
+## 与 pi-optchat 的差异
 
 | | pi-optchat | InfiniteChat |
 | --- | --- | --- |
-| Data home | `~/.optchat` | `~/.infinite-chat` (`INFINITE_CHAT_HOME` overrides; the old `OPTCHAT_HOME` spelling still works) |
-| Profile scope | global | **per directory**: a profile belongs to the project directory it was created in |
-| Picker | all profiles, last used first | this directory's profiles first, others behind `── Profiles from other directories…` |
-| Session resume | remembers the binding | same, plus sessions bound by pi-optchat still resume (legacy `optchat.profile` entries are read; the bound profile is converted on demand) |
-| Defaults | — | **subagents and compactor default to `zai-coding-cn/glm-5.3-flash`** (thinking: high / medium) |
-| Global defaults | per profile only | `~/.infinite-chat/config.json` seeds every new profile and fills gaps when a profile loads |
-| Sockets | `lock.sock` inside the profile, fail hard elsewhere | **candidate fallback**: profile dir → `<dataHome>/sock/` → temp dir, so ohos sandboxes that refuse unix sockets still lock and connect |
-| Title | `π work · 2 agents` | `π work · glm-5.3-flash (sub high / cmp medium) · 2 agents` |
-| Footer | `OptChat: work · 12 messages …` | `InfiniteChat: work · sub zai-coding-cn/glm-5.3-flash(high) · cmp zai-coding-cn/glm-5.3-flash(medium) · 12 messages …` |
-| Command | `/optchat` | `/infinite-chat` (flags: `--infinite-chat-profile`, `--infinite-chat-connect`, `--infinite-chat-agent`; the `--optchat-*` spellings still work) |
-| Memory tools | `zoom` loads whole text | **`ask(question, id, n)`**: the profile's compactor model reads the line (or a subagent's whole run) and returns only the answer, so huge archives never enter the context; `zoom`/`ask` results also note files that changed after the line was written |
+| 数据主目录 | `~/.optchat` | `~/.infinite-chat`（`INFINITE_CHAT_HOME` 可覆盖;旧的 `OPTCHAT_HOME` 写法仍然有效） |
+| 配置档案作用域 | 全局 | **按目录区分**:配置档案归属于创建它时所在的项目目录 |
+| 选择器 | 显示全部配置档案,最近使用的在前 | 先显示本目录的配置档案,其他目录的收纳在 `── Profiles from other directories…` 之后 |
+| 会话恢复 | 记住绑定关系 | 相同,并且 pi-optchat 绑定的会话仍可恢复（读取旧版 `optchat.profile` 条目;所绑定的配置档案按需转换） |
+| 默认值 | — | **子代理和压缩器默认使用 `zai-coding-cn/glm-5.3-flash`**（thinking 为 high / medium） |
+| 全局默认 | 仅限单个配置档案 | `~/.infinite-chat/config.json` 为每个新配置档案提供初始值,并在配置档案加载时补齐缺失项 |
+| 套接字 | 配置档案目录内的 `lock.sock`,在其他位置直接失败 | **候选回退**:配置档案目录 → `<dataHome>/sock/` → 临时目录,拒绝 Unix 域套接字的 ohos 沙箱也能正常加锁和连接 |
+| 标题栏 | `π work · 2 agents` | `π work · glm-5.3-flash (sub high / cmp medium) · 2 agents` |
+| 底部状态栏 | `OptChat: work · 12 messages …` | `InfiniteChat: work · sub zai-coding-cn/glm-5.3-flash(high) · cmp zai-coding-cn/glm-5.3-flash(medium) · 12 messages …` |
+| 命令 | `/optchat` | `/infinite-chat`（标志:`--infinite-chat-profile`、`--infinite-chat-connect`、`--infinite-chat-agent`;旧的 `--optchat-*` 写法仍然有效） |
+| 记忆工具 | `zoom` 会加载整段文本 | **`ask(question, id, n)`**:由配置档案的压缩器模型读取该行内容（或某个子代理的完整运行记录）,只返回答案,海量历史内容不会进入上下文;`zoom` 和 `ask` 的结果还会标注在该行写入之后发生变更的文件 |
 
-Everything else — the OptChat recipe numbers, summary tree, zoom/date, subagents, imports, connected windows, usage and activity inspectors — works as in upstream. See the [upstream README](https://github.com/jonaslsaa/pi-optchat#readme) for the full tour.
+其余部分——OptChat 的配方数值 (recipe numbers)、摘要树、zoom/date、子代理、导入、连接的窗口、用量与活动检查器——均与上游一致。完整介绍见[上游 README](https://github.com/jonaslsaa/pi-optchat#readme)。
 
-## Install
+## 安装
+
+先移除 pi-optchat 再安装本扩展:两个扩展会争抢相同的工具与钩子。安装前,将 `/path/to/infinite-chat` 替换为本仓库的实际路径。
 
 ```sh
-pi remove npm:pi-optchat        # do this first: both extensions would fight over the same tools and hooks
+pi remove npm:pi-optchat
 pi install /path/to/infinite-chat
 ```
 
-Restart Pi, run `/infinite-chat`, and choose **+ Create profile** — the profile is created for the directory you started Pi in.
+重启 Pi,运行 `/infinite-chat`,选择 **+ Create profile**（创建配置档案）——配置档案会创建在你启动 Pi 时所在的目录。
 
-Creating a profile runs a short wizard: it shows the **subagent model** and the **compactor model** the profile will use — prefilled from `~/.infinite-chat/config.json` when that exists, otherwise from the built-in defaults — and lets you change each before the profile is created. The choices are baked into the new profile's own `config.json`. If the global `config.json` does not exist yet, your choices are written there too, so the next profile starts from them; from then on the global config only changes when you edit it by hand.
+创建配置档案时会运行一个简短的向导:向导展示该配置档案将要使用的**子代理模型**和**压缩器模型**——若 `~/.infinite-chat/config.json` 存在则以其预填,否则使用内置默认值——并允许你在创建前逐项修改。所选结果会固化到新配置档案自己的 `config.json` 中。如果全局 `config.json` 尚不存在,你的选择也会写入其中,下一个配置档案便从这里起步;此后,全局配置只在你手动编辑时才会变化。
 
-**Rename profile** in the same picker moves a profile to a new name (directory rename in place — models, memory and history stay). Renaming the profile this session has open works too: it releases the lock, renames, and reopens the profile under its new name. A profile held by another Pi refuses; switch that one away first. Sessions still bound to the old name keep working: resume maps the old name through `~/.infinite-chat/renames.json` and re-binds to the new one.
+同一选择器中的 **Rename profile**（重命名配置档案）可将配置档案改为新名称（原地重命名目录——模型、记忆和历史保持不变）。重命名当前会话已打开的配置档案同样可行:它会释放锁、执行重命名,并以新名称重新打开该配置档案。被另一个 Pi 实例占用的配置档案会拒绝重命名;请先在那个窗口切换到其他配置档案。仍绑定旧名称的会话继续可用:恢复时通过 `~/.infinite-chat/renames.json` 将旧名称映射,并重新绑定到新名称。
 
-### Coming from pi-optchat
+### 从 pi-optchat 迁移
 
-Nothing is copied automatically. Old profiles stay in `~/.optchat` until you convert them: the profile picker (`/infinite-chat profile`) shows a `── Old profiles from ~/.optchat (select to convert)…` section listing what has not been converted yet. Picking one copies it into `~/.infinite-chat` (the original is kept untouched; stale lock sockets and lock files are not copied) and opens it right away. There is also a one-shot "Convert all" entry in the same menu.
+不会自动复制任何内容。旧配置档案保留在 `~/.optchat`,直到你手动转换:配置档案选择器 (`/infinite-chat profile`) 会显示一个 `── Old profiles from ~/.optchat (select to convert)…` 分区,列出尚未转换的配置档案。选中一项会将其复制到 `~/.infinite-chat`（原件保持不动;失效的锁套接字和锁文件不会被复制）并立即打开。同一菜单中还有一次性的「Convert all」（全部转换）入口。
 
-Resuming a session that pi-optchat bound still works without any picking: the bound profile is converted on demand on resume. Converted profiles have no recorded directory, so they appear in every directory's picker until you open one — opening it claims it for that directory. Set `INFINITE_CHAT_NO_LEGACY=1` to hide the old profiles entirely.
+恢复 pi-optchat 绑定的会话无需任何手动选择即可工作:恢复时按需转换所绑定的配置档案。转换后的配置档案没有记录所属目录,因此会出现在每个目录的选择器中,直到你打开其中一个——一旦打开,它就归属于该目录。设置 `INFINITE_CHAT_NO_LEGACY=1` 可完全隐藏旧配置档案。
 
-## Directory scoping
+## 目录作用域
 
-- `~/.infinite-chat/profiles/<name>/profile.json` records `cwd` (creation directory), `createdAt` and `lastUsedAt`.
-- The picker shows profiles of the current directory (plus not-yet-claimed ones), most recently used first, and **Enter picks the last used one**.
-- Switching profiles keeps the conversation: the old profile is released, the new one opens, and the session re-binds in place — nothing is cleared. One exception: a session still bound to a profile another window is running (after "Open a different profile instead") belongs to that window, so switching forks the transcript into a new session bound to the pick — this window keeps the history, the other window keeps its session untouched.
-- Other directories' profiles are one expansion away; each row shows its directory.
-- Resuming a session always restores its bound profile, whatever directory you resume from — the scope only affects picking, never resuming.
+- `~/.infinite-chat/profiles/<name>/profile.json` 记录 `cwd`（创建目录）、`createdAt` 和 `lastUsedAt`。
+- 选择器显示当前目录的配置档案（以及尚未归属的配置档案）,最近使用的在前,**按 Enter 会选中最近使用的一个**。
+- 切换配置档案会保留对话:旧配置档案被释放,新配置档案打开,会话在原地重新绑定——不会清空任何内容。一个例外:当会话仍绑定着一个正在被另一个窗口运行的配置档案时（在「Open a different profile instead」之后）,该会话属于那个窗口,此时切换会把对话记录分叉为一个绑定到所选配置档案的新会话——本窗口保留历史,另一个窗口的会话不受影响。
+- 其他目录的配置档案一次展开即可看到;每一行都会显示其所属目录。
+- 无论从哪个目录恢复,恢复会话总会还原其绑定的配置档案——目录作用域只影响选择,从不影响恢复。
 
-## Resuming sessions
+## 恢复会话
 
-- Pi stores sessions **per directory**, and all profiles of that directory share one pool. `pi -r` resumes the most recently written session in the pool — while a window is open and chatting, its conversation is always the newest, so plain `pi -r` lands there, not on the profile you last worked in.
-- The binding still decides the profile: whatever session `pi -r` picks, the profile it belongs to is the one that opens. If that profile is busy (its window is still open), the dialog offers **Open a different profile instead** first — it leaves the resumed session untouched; `/infinite-chat profile` then forks the conversation onto the profile you pick, since this session stays bound to the busy one.
-- To resume a specific conversation in a multi-profile directory, use `/infinite-chat sessions` (also in the `/infinite-chat` menu): it lists the directory's sessions newest-first, each annotated with its bound profile, message count, first-message preview, and whether that profile is busy, legacy or missing. Picking one switches to that session and opens its bound profile (renames followed; a held profile lands in the busy dialog). `/resume` works too, without the annotations. `pi --infinite-chat-profile <name>` starts a fresh session bound to a chosen profile.
+- Pi 按目录存储会话,该目录下所有配置档案共享一个会话池。`pi -r` 恢复池中最近写入的会话——只要某个窗口仍打开并在对话,它的会话就总是最新的,因此直接执行 `pi -r` 会恢复到那里,而不是你上次使用的配置档案。
+- 绑定关系仍然决定配置档案:无论 `pi -r` 选中哪个会话,打开的都是它所属的配置档案。如果该配置档案正被占用（其窗口仍然打开）,对话框会先提供 **Open a different profile instead**（改用其他配置档案）选项——该选项不会改动被恢复的会话;随后可用 `/infinite-chat profile` 把对话分叉到你选中的配置档案,因为当前会话仍绑定着被占用的那个。
+- 在多配置档案目录中恢复某个特定对话时,使用 `/infinite-chat sessions`（也位于 `/infinite-chat` 菜单中）:它按最新在前列出该目录的会话,并标注每个会话绑定的配置档案、消息数、首条消息预览,以及该配置档案处于占用、旧版还是缺失状态。选中一项即切换到该会话并打开其绑定的配置档案（重命名会被自动跟随;被占用的配置档案会进入占用对话框）。`/resume` 同样可用,但没有这些标注。`pi --infinite-chat-profile <name>` 会启动一个绑定到指定配置档案的全新会话。
 
-## Global default config
+## 全局默认配置
 
-`~/.infinite-chat/config.json` uses the same shape as a profile's own `config.json`:
+`~/.infinite-chat/config.json` 与配置档案自身的 `config.json` 使用相同的结构:
 
 ```json
 {
@@ -66,46 +70,48 @@ Resuming a session that pi-optchat bound still works without any picking: the bo
 }
 ```
 
-- **Creating** a profile starts the wizard from these values and bakes the final choices into the profile's `config.json` (instead of the code defaults). The first creation without this file writes it from the wizard's choices.
-- **Loading** a profile fills any key its own `config.json` leaves out from this file, then the built-in defaults.
-- Invalid keys are dropped with a warning, never fatal.
+- **创建**配置档案时,向导从这些值开始,并把最终选择固化到该配置档案的 `config.json`（而非代码内置默认值）。在此文件不存在时的首次创建,会依据向导中的选择生成这个文件。
+- **加载**配置档案时,其自身 `config.json` 缺失的键先由这个文件补齐,再由内置默认值补齐。
+- 无效的键会被丢弃并给出警告,绝不会导致致命错误。
 
-## ohos notes
+## ohos 说明
 
-ohos app sandboxes may map the home directory onto storage that rejects unix domain sockets, which broke pi-optchat's profile lock (`listen`/`bind` failures). InfiniteChat resolves the socket path through an ordered candidate list, and both the owner and any connector compute the same list:
+ohos 应用沙箱可能把主目录映射到拒绝 Unix 域套接字的存储上,这曾导致 pi-optchat 的配置档案锁失效（`listen`/`bind` 失败）。InfiniteChat 通过一个有序的候选列表解析套接字路径,持有者与任何连接方计算出的都是同一份列表:
 
-1. `$INFINITE_CHAT_SOCK_HOME` — explicit override; on ohos point this at a short, sandbox-writable directory.
-2. `<profile>/lock.sock` (and `windows.sock`) — the classic layout when the path fits `sun_path` and the filesystem allows sockets.
-3. `<dataHome>/sock/infinite-chat-<hash>-<purpose>.sock` — still inside your data home, but short.
-4. `<tmpdir>/infinite-chat-<hash>-<purpose>.sock` — last resort.
+1. `$INFINITE_CHAT_SOCK_HOME` — 显式覆盖;在 ohos 上,把它指向一个路径短、沙箱内可写的目录。
+2. `<profile>/lock.sock`（以及 `windows.sock`）— 路径能放进 `sun_path` 且文件系统允许套接字时的经典布局。
+3. `<dataHome>/sock/infinite-chat-<hash>-<purpose>.sock` — 仍在数据主目录内,但路径更短。
+4. `<tmpdir>/infinite-chat-<hash>-<purpose>.sock` — 最后的备选。
 
-A bind failure that means "this directory cannot hold a socket" (permissions, no socket support, path too long) tries the next candidate; a socket already held by a live owner is always reported as busy, never silently shadowed. If the home directory itself is not writable, set `INFINITE_CHAT_HOME` to one that is.
+表示「此目录无法存放套接字」的绑定失败（权限不足、不支持套接字、路径过长）会尝试下一个候选;已被活跃持有者占用的套接字总是报告为「占用中」,绝不会静默地被顶替。如果主目录本身不可写,请将 `INFINITE_CHAT_HOME` 设置为一个可写的目录。
 
-## Storage
+## 存储结构
 
-```
+```text
 ~/.infinite-chat/
-├── config.json              # global defaults (optional)
-├── renames.json             # renamed profiles: old session bindings resume under the new name
-├── sock/                    # socket fallback directory
+├── config.json              # 全局默认值（可选）
+├── renames.json             # 已重命名的配置档案:旧的会话绑定在新名称下恢复
+├── sock/                    # 套接字回退目录
 └── profiles/<name>/
-    ├── profile.json         # cwd / createdAt / lastUsedAt (directory scoping)
-    ├── config.json          # this profile's models and settings
-    ├── AGENTS.md            # this profile's instructions
+    ├── profile.json         # cwd / createdAt / lastUsedAt（目录作用域）
+    ├── config.json          # 此配置档案的模型与设置
+    ├── AGENTS.md            # 此配置档案的指令
     ├── main/ tree/ view.json images/
     ├── active-memory.json memories/ imports/
     ├── runs/ usage.jsonl pending-*.json
-    └── lock.sock            # when the profile dir can hold it
+    └── lock.sock            # 当配置档案目录可以存放套接字时
 ```
 
-Each profile folder is a local Git repository, committed after each turn, exactly as upstream. Delete a profile by deleting its folder.
+每个配置档案文件夹都是一个本地 Git 仓库,每轮对话结束后提交一次,与上游完全一致。删除配置档案所在的文件夹即可删除该配置档案。
 
-## Development
+## 开发
+
+以下命令依次安装依赖、运行类型检查和离线测试:
 
 ```sh
 npm install
 npm run check   # tsc --noEmit
-npm test        # offline test suite (332 tests)
+npm test        # 离线测试套件（332 个测试）
 ```
 
-Licensed MIT; derived from pi-optchat by Jonas (see LICENSE and THIRD_PARTY_NOTICES of upstream).
+采用 MIT 许可证;衍生自 Jonas 的 pi-optchat（参见上游的 LICENSE 和 THIRD_PARTY_NOTICES）。
