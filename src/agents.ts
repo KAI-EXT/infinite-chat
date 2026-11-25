@@ -22,6 +22,8 @@ import { THINKING } from './profiles.ts';
 
 export interface LiveRun {
   session: AgentSession; info: RunInfo; updated: number; streaming?: AgentMessage;
+  /** Index of the stable gateway session this run binds to (`<parentSession>-sub<slot>`); slots are reused so bindings stay warm. */
+  slot?: number;
   tools: Map<string, { name: string; args: unknown; output?: unknown; started: number }>;
   pendingReports: string[]; pendingGuidance: Guidance[]; wake?: () => void; completion?: Promise<void>; primed?: Promise<unknown>;
   /** Set by the user's interrupt: the queued guidance the run continues with once its current step is aborted; with none, it pauses. */
@@ -141,12 +143,16 @@ export class Children {
   private settling = 0;
   private readonly launches = new Set<Promise<unknown>>();
   private readonly completions = new Set<Promise<void>>();
+  /** Stable base for child session ids: the parent session id, so session-affine gateways keep one binding warm per slot. */
+  private readonly stableBase: string;
+  private slotCounter = 0;
   /** Aborted when Pi starts closing: see deferHandoffs(). */
   private readonly deferring = new AbortController();
   constructor(private readonly memory: Memory, private readonly registry: ModelRegistry,
     private readonly choice: () => ModelChoice, private readonly instructions: () => string,
     private readonly report: (text: string, options?: { once?: boolean; count?: number }) => Promise<void>, private readonly warn: (text: string) => void,
     private readonly profileDirectory = memory.directory, private readonly options: Options = {}) {
+    this.stableBase = options.parentSession || randomUUID().slice(0, 8);
     this.history = new RunHistory(profileDirectory);
     for (const warning of this.history.warnings) warn(warning);
     for (const run of this.history.records.values()) {
@@ -290,11 +296,17 @@ export class Children {
         signal?.throwIfAborted();
         if (cancelled()) throw new Error('Parent or profile is stopping.');
         const id = randomUUID().slice(0, 8), directory = taskDirectory(cwd, task.cwd);
+        // One stable gateway session per slot (`<parentSession>-sub<slot>`, lowest free slot first): session-affine gateways keep the
+        // binding and its prompt cache warm across runs, instead of a fresh session per run piling up until their timeout releases it.
+        const max = Math.max(1, this.settings.maxAgents);
+        const taken = new Set([...this.running.values()].flatMap(live => live.slot === undefined ? [] : [live.slot]));
+        let slot = 0; while (taken.has(slot)) slot++;
+        if (slot >= max) slot = this.slotCounter++ % max;
         const session = await this.open({ id, directory, depth, parentId, connected, model: task.model, thinking: task.thinking,
-          sessionManager: SessionManager.create(directory, join(this.profileDirectory, 'runs')) });
+          sessionManager: SessionManager.create(directory, join(this.profileDirectory, 'runs'), { id: `${this.stableBase}-sub${slot}` }) });
         const info: RunInfo = { id, task: task.task, cwd: directory, model: `${task.model.provider}/${task.model.id}`, thinking: session.thinkingLevel,
           parentSession: this.options.parentSession ?? '', parentId, depth, sessionFile: session.sessionFile, started: Date.now(), state: 'running', guidance: [], ...(connected ? { connected: true } : {}) };
-        const live: LiveRun = { session, info, updated: Date.now(), tools: new Map(), pendingReports: [], pendingGuidance: [], steering: Promise.resolve() };
+        const live: LiveRun = { session, slot, info, updated: Date.now(), tools: new Map(), pendingReports: [], pendingGuidance: [], steering: Promise.resolve() };
         launched.push(live); this.save(info); this.running.set(id, live);
         this.launching--; reserved--;
         session.subscribe(event => this.observe(live, event));
@@ -639,6 +651,9 @@ export class Children {
     try {
       // No thinking level: the session restores the one it ran with.
       const session = await this.open({ id, directory: run.cwd, depth: run.depth, parentId: run.parentId, connected: false, model, sessionManager: manager });
+      // A resumed run keeps the stable session slot it launched with, so concurrent launches cannot land on its warm gateway session.
+      const [, tail] = manager.getSessionId().split('-sub');
+      const slot = tail && /^\d+$/.test(tail) ? Number(tail) : undefined;
       // stop() cannot see this child until it is registered, so a parent stopped meanwhile must cancel it here.
       const parent = run.parentId ? this.running.get(run.parentId) : undefined;
       if (this.closing || run.parentId && (!parent || !['running', 'waiting', 'paused'].includes(parent.info.state))) {
@@ -651,7 +666,7 @@ export class Children {
       const info: RunInfo = { ...rest, state: 'running', started: Date.now(), parentSession: this.options.parentSession ?? run.parentSession,
         guidance: [...run.guidance, { text: prompt, date: Date.now(), state: 'queued', from: 'manager' }] };
       try { this.save(info); } catch (error) { this.history.records.set(id, run); await this.shutdown(session); this.dispose(session); throw error; }
-      const live: LiveRun = { session, info, updated: Date.now(), tools: new Map(), pendingReports: [], pendingGuidance: [], steering: Promise.resolve() };
+      const live: LiveRun = { session, slot, info, updated: Date.now(), tools: new Map(), pendingReports: [], pendingGuidance: [], steering: Promise.resolve() };
       this.running.set(id, live);
       this.launching--; reserved = false;
       session.subscribe(event => this.observe(live, event));

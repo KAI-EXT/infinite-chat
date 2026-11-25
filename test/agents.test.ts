@@ -1146,3 +1146,50 @@ test('a ~\\ task cwd is the home directory on Windows only', () => {
   assert.equal(taskDirectory('/base', '~\\project', false), resolve('/base', '~\\project'), 'a POSIX backslash is a literal character');
   assert.equal(taskDirectory('/base', '~/project', false), join(homedir(), 'project'));
 });
+
+test('child gateway sessions are stable per slot: runs reuse <parent>-sub<slot> instead of minting a fresh session per run', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'infinite-chat-agents-'));
+  const memory = new Memory(dir, async input => input.source.slice(0, 100), () => {});
+  const releases = new Map<string, () => void>();
+  const runtime = await ModelRuntime.create({ authPath: join(dir, 'auth.json'), modelsPath: null, modelsStorePath: join(dir, 'models-cache.json'), refreshOnCreate: false });
+  runtime.registerProvider('infinite-chat-test', {
+    baseUrl: 'https://invalid.local', apiKey: 'synthetic', api: 'openai-completions',
+    models: [{ id: 'child', name: 'Synthetic child', reasoning: false, input: ['text'], cost: { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 1 }, contextWindow: 100000, maxTokens: 1000 }],
+    streamSimple(model, context, options) {
+      const stream = createAssistantMessageEventStream();
+      const task = textContent(context.messages.find(m => m.role === 'user')?.content).split('Your task:\n').at(-1) ?? '';
+      const message: AssistantMessage = { role: 'assistant', content: [{ type: 'text', text: `Working on ${task}` }],
+        api: model.api, provider: model.provider, model: model.id, timestamp: Date.now(), stopReason: 'stop',
+        usage: { ...emptyUsage(), input: 100, output: 10, cacheRead: 50, totalTokens: 160, cost: { input: 0.01, output: 0.02, cacheRead: 0.001, cacheWrite: 0, total: 0.031 } } };
+      void (async () => {
+        stream.push({ type: 'start', partial: message });
+        stream.push({ type: 'text_delta', contentIndex: 0, delta: textContent(message.content), partial: message });
+        await new Promise<void>(resolve => {
+          const release = () => { options?.signal?.removeEventListener('abort', release); resolve(); };
+          releases.set(task, release); options?.signal?.addEventListener('abort', release, { once: true });
+          if (options?.signal?.aborted) release();
+        });
+        stream.push({ type: 'done', reason: 'stop', message });
+        stream.end();
+      })();
+      return stream;
+    },
+  });
+  const children = new Children(memory, new ModelRegistry(runtime), () => ({ provider: 'infinite-chat-test', model: 'child', thinking: 'minimal' }), () => '',
+    async () => {}, () => {}, dir,
+    { settings: () => ({ ...nested(), maxAgents: 2 }), parentSession: 'parent-session', createSession: options => createAgentSession({ ...options, modelRuntime: runtime }) });
+  try {
+    const [one, two] = await children.spawn([{ task: 'first' }, { task: 'second' }], dir);
+    await until(() => releases.size === 2);
+    assert.equal(children.live(one)?.session.sessionManager.getSessionId(), 'parent-session-sub0');
+    assert.equal(children.live(two)?.session.sessionManager.getSessionId(), 'parent-session-sub1');
+    releases.get('first')!(); releases.get('second')!();
+    await until(() => !children.active);
+    const [third] = await children.spawn([{ task: 'third' }], dir);
+    await until(() => releases.has('third'));
+    assert.equal(children.live(third)?.session.sessionManager.getSessionId(), 'parent-session-sub0', 'a finished run frees its slot: the next run reuses the warm gateway session');
+    releases.get('third')!();
+    await until(() => !children.active);
+  } finally { for (const release of releases.values()) release(); await children.close(); }
+  removeDir(dir);
+});
