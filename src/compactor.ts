@@ -42,14 +42,21 @@ function primeFirst() {
     };
   };
 }
-/** Pi's agent loop retries a dropped connection itself; streamSimple doesn't, so a transient error is asked again before it surfaces. */
+/** A concurrency-limited gateway answers 429 with its own retry hint (`retry-after: 5`); re-asking every second only feeds the jam. */
+const RATE_DELAYS = [5_000, 15_000];
+const rateLimited = (reply: AssistantMessage) =>
+  reply.stopReason === 'error' && /429|rate.?limit|并发已满/i.test(reply.errorMessage ?? '');
+
+/** Pi's agent loop retries a dropped connection itself; streamSimple doesn't, so a transient error is asked again before it surfaces.
+ * A rate-limited reply waits on the rate delays instead: the pool frees on the gateway's `retry-after` timescale, not a second's. */
 export async function retryTransient(ask: () => Promise<AssistantMessage>, onReply: (reply: AssistantMessage) => void,
-  delays: readonly number[] = [1000, 2000], signal?: AbortSignal) {
+  delays: readonly number[] = [1000, 2000], signal?: AbortSignal, rateDelays: readonly number[] = RATE_DELAYS) {
   for (let retry = 0; ; retry++) {
     const reply = await ask();
     onReply(reply);
-    if (retry >= delays.length || !isRetryableAssistantError(reply)) return reply;
-    await sleep(delays[retry], undefined, { signal });
+    const waits = rateLimited(reply) ? rateDelays : delays;
+    if (retry >= waits.length || !isRetryableAssistantError(reply)) return reply;
+    await sleep(waits[retry], undefined, { signal });
   }
 }
 

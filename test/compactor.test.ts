@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createAssistantMessageEventStream, type AssistantMessage } from '@earendil-works/pi-ai';
 import { ModelRegistry, ModelRuntime } from '@earendil-works/pi-coding-agent';
-import { createCompressor } from '../src/compactor.ts';
+import { createCompressor, retryTransient } from '../src/compactor.ts';
 import { Refused } from '../src/memory.ts';
 import { emptyUsage } from '../src/usage.ts';
 import { textContent } from '../src/transcript.ts';
@@ -155,4 +155,25 @@ test('a refusal the model itself stops with is final, without asking again', { t
   calls[0].fail('The model refused to complete the request', 'refusal');
   await assert.rejects(reply, Refused);
   assert.equal(calls.length, 1);
+});
+
+const fake = (errorMessage?: string): AssistantMessage => ({ role: 'assistant', content: [], api: 'anthropic-messages', provider: 't', model: 'm',
+  timestamp: Date.now(), stopReason: errorMessage ? 'error' : 'stop', ...(errorMessage ? { errorMessage } : {}), usage: emptyUsage() });
+
+test('a rate-limited reply waits out the rate delays instead of the fast transient ones', { timeout: 5000 }, async () => {
+  const queue = [fake('429: {"message":"你的并发已满，请检查是否有并行的子 agent 或其它会话。"}'), fake('429: {"message":"你的并发已满"}'), fake()];
+  const seen: AssistantMessage[] = [];
+  const started = Date.now();
+  const final = await retryTransient(async () => queue.shift()!, reply => { seen.push(reply); }, [0, 0], undefined, [20, 30]);
+  assert.equal(final.stopReason, 'stop');
+  assert.equal(seen.length, 3, 'asked until the pool let it through');
+  assert.ok(Date.now() - started >= 50, `backed off on the rate delays (took ${Date.now() - started}ms), not the fast ones`);
+});
+
+test('a plain transient error still rides the fast delays even when rate delays are configured', { timeout: 5000 }, async () => {
+  const queue = [fake('terminated'), fake()];
+  const started = Date.now();
+  const final = await retryTransient(async () => queue.shift()!, () => {}, [0, 0], undefined, [5_000]);
+  assert.equal(final.stopReason, 'stop');
+  assert.ok(Date.now() - started < 4_000, 'no rate backoff for a dropped connection');
 });
